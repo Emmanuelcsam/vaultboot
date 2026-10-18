@@ -23,14 +23,17 @@ lb config --mode debian --distribution trixie --architectures amd64 \
     --debootstrap-options '--variant=minbase' \
     --apt-recommends false --apt-secure true --apt-source-archives true \
     --bootloaders 'syslinux grub-efi' --uefi-secure-boot disable \
-    --debian-installer false --firmware-binary false --firmware-chroot false \
+    --debian-installer none --firmware-binary false --firmware-chroot false \
     --memtest none --linux-flavours amd64 \
     --bootappend-live 'boot=live components username=writer hostname=vaultboot persistence persistence-label=vaultboot-data locales=en_US.UTF-8 quiet console=tty0 console=ttyS0,115200' \
     --iso-application 'Vaultboot Debian Obsidian appliance' \
     --iso-publisher 'Vaultboot community project' --iso-volume VAULTBOOT \
-    --mksquashfs-options "-comp xz -b 1M -processors $cpus -mem 1G" \
+    --chroot-squashfs-compression-type xz \
     --source true --source-images tar --compression gzip
 cp -a /src/config/. config/
+# Trixie's live-build exposes compression as a CLI option, but reads additional
+# mksquashfs flags from MKSQUASHFS_OPTIONS in its shell configuration.
+printf '\nMKSQUASHFS_OPTIONS="-b 1M -processors %s -mem 1G"\n' "$cpus" >> config/common
 # Local tests may import included Python modules. Never bake those caches into the OS.
 find config -type d -name __pycache__ -prune -exec rm -rf -- {} +
 find config -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete

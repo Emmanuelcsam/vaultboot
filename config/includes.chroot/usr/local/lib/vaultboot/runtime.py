@@ -298,13 +298,31 @@ Vaultboot is an independent Debian-based project, not an official Obsidian produ
 
     def stop_child(self, *_):
         self.stopping = True
-        if self.child and self.child.poll() is None:
-            self.child.terminate()
+        self.signal_child(signal.SIGTERM)
 
     def restart_child(self, *_):
         self.restart_requested = True
+        self.signal_child(signal.SIGTERM)
+
+    def signal_child(self, sig: int):
         if self.child and self.child.poll() is None:
-            self.child.terminate()
+            try:
+                os.killpg(self.child.pid, sig)
+            except ProcessLookupError:
+                pass
+
+    def wait_for_child(self) -> int:
+        stop_deadline = None
+        while True:
+            try:
+                return self.child.wait(timeout=0.5)
+            except subprocess.TimeoutExpired:
+                self.rotate_app_log()
+                if self.stopping or self.restart_requested:
+                    if stop_deadline is None:
+                        stop_deadline = time.monotonic() + 8
+                    elif time.monotonic() >= stop_deadline:
+                        self.signal_child(signal.SIGKILL)
 
     def session(self) -> int:
         with (self.state / "session.lock").open("a") as lock:
@@ -334,8 +352,8 @@ Vaultboot is an independent Debian-based project, not an official Obsidian produ
                     began = time.monotonic()
                     self.restart_requested = False
                     with (self.state / "obsidian.log").open("ab") as output:
-                        self.child = subprocess.Popen([str(executable)], stdout=output, stderr=subprocess.STDOUT)
-                        code = self.child.wait()
+                        self.child = subprocess.Popen([str(executable)], stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+                        code = self.wait_for_child()
                     self.child = None
                     if self.stopping:
                         break
@@ -370,7 +388,13 @@ Vaultboot is an independent Debian-based project, not an official Obsidian produ
     def rotate_app_log(self):
         log = self.state / "obsidian.log"
         if log.exists() and log.stat().st_size > 4_000_000:
-            os.replace(log, self.state / "obsidian.log.1")
+            # The live child holds this inode open with O_APPEND. Preserve a bounded
+            # tail and truncate in place so a long-running app cannot fill storage.
+            with log.open("rb") as source:
+                source.seek(-4_000_000, os.SEEK_END)
+                (self.state / "obsidian.log.1").write_bytes(source.read(4_000_000))
+            with log.open("wb"):
+                pass
 
     def disable_plugins(self):
         plugin_file = self.notes / ".obsidian/community-plugins.json"

@@ -234,6 +234,23 @@ class RuntimeTests(unittest.TestCase):
         for call in launches.call_args_list:
             self.assertNotIn("--no-sandbox", call.args[0])
 
+    def test_unresponsive_child_is_killed_after_restart_grace_period(self):
+        self.app.child = MagicMock()
+        self.app.child.wait.side_effect = [subprocess.TimeoutExpired("obsidian", 0.5), subprocess.TimeoutExpired("obsidian", 0.5), -9]
+        self.app.restart_requested = True
+        with patch.object(runtime.time, "monotonic", side_effect=[10, 19]), patch.object(self.app, "signal_child") as terminate:
+            self.assertEqual(self.app.wait_for_child(), -9)
+        terminate.assert_called_once_with(runtime.signal.SIGKILL)
+
+    def test_log_rotation_preserves_inode_for_running_child(self):
+        log = self.app.state / "obsidian.log"
+        log.write_bytes(b"x" * 4_000_100)
+        inode = log.stat().st_ino
+        self.app.rotate_app_log()
+        self.assertEqual(log.stat().st_ino, inode)
+        self.assertEqual(log.stat().st_size, 0)
+        self.assertEqual((self.app.state / "obsidian.log.1").stat().st_size, 4_000_000)
+
     def test_backup_contains_notes_and_hidden_vault_settings(self):
         self.app.prepare_notes()
         (self.app.notes / ".obsidian/app.json").write_text("{}")

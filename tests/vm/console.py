@@ -130,7 +130,11 @@ def main():
             stream.write(json.dumps(value) + "\n")
     vm = VM(args.image, work, args.firmware, args.offline)
     try:
-        emit({"event": "login", "result": vm.login()})
+        try:
+            emit({"event": "login", "result": vm.login()})
+        except Exception as error:
+            vm.qmp("screendump", {"filename": str(work / "login-failure.ppm")})
+            emit({"event": "login", "error": str(error)})
         deadline = time.monotonic() + 1800
         with queue.open() as stream:
             while time.monotonic() < deadline and vm.process.poll() is None:
@@ -147,6 +151,11 @@ def main():
                         result = vm.qmp("screendump", {"filename": str(work / (command["name"] + ".ppm"))})
                     elif kind == "key":
                         result = vm.qmp("human-monitor-command", {"command-line": "sendkey " + command["key"]})
+                    elif kind == "serial":
+                        vm.serial.sendall(command["text"].encode())
+                        result = "sent"
+                    elif kind == "read":
+                        result = vm.read_until(command["marker"].encode(), command.get("timeout", 30))
                     elif kind == "stop":
                         break
                     else:

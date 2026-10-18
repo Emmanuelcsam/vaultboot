@@ -1,6 +1,7 @@
 artifacts/
 out/
 build-output/
+dist/
 __pycache__/
 *.pyc
 *.iso
