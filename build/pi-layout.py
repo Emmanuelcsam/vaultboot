@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 import stat
+import struct
 import subprocess
 
 
@@ -39,6 +40,16 @@ def partition_number(table, partition):
     return int(suffix.removeprefix("p"))
 
 
+def validate_hybrid_mbr(header, boot):
+    """Pi 3 firmware must see the FAT partition through the hybrid MBR."""
+    if len(header) != 512 or header[510:512] != b"\x55\xaa":
+        raise ValueError("Missing Pi hybrid MBR signature")
+    entry = header[446:462]
+    start, size = struct.unpack_from("<II", entry, 8)
+    if entry[4] != 0x0C or start != boot["start"] or size != boot["size"]:
+        raise ValueError("Pi hybrid MBR must expose the GPT firmware partition as its first FAT32 entry")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", type=Path)
@@ -47,6 +58,9 @@ def main():
         parser.error("Input must be a regular image file, not a device or symlink")
     table = json.loads(subprocess.check_output(["sfdisk", "--json", str(args.image)], text=True))["partitiontable"]
     boot, root = validate_layout(table)
+    if table["label"] == "gpt":
+        with args.image.open("rb") as stream:
+            validate_hybrid_mbr(stream.read(512), boot)
     if max(p["start"] + p["size"] for p in table["partitions"]) * 512 > args.image.stat().st_size:
         raise ValueError("Image does not contain its complete partition table extents")
     print(json.dumps({"partitiontable": table, "boot_partition": partition_number(table, boot),

@@ -3,6 +3,7 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+import struct
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,6 +58,23 @@ class PiLayoutTests(unittest.TestCase):
         table["partitions"][0]["type"] = "83"
         with self.assertRaisesRegex(ValueError, "firmware"):
             layout.validate_layout(table)
+
+    def test_hybrid_fat_entry_must_match_gpt_firmware_partition(self):
+        header = bytearray(512)
+        header[510:512] = b"\x55\xaa"
+        header[450] = 0x0C
+        struct.pack_into("<II", header, 454, 2048, 1046528)
+        layout.validate_hybrid_mbr(header, {"start": 2048, "size": 1046528})
+        with self.assertRaisesRegex(ValueError, "firmware partition"):
+            layout.validate_hybrid_mbr(header, {"start": 2048, "size": 1046529})
+
+    def test_protective_only_gpt_mbr_is_refused_for_pi3(self):
+        header = bytearray(512)
+        header[510:512] = b"\x55\xaa"
+        header[450] = 0xEE
+        struct.pack_into("<II", header, 454, 1, 16777215)
+        with self.assertRaisesRegex(ValueError, "FAT32"):
+            layout.validate_hybrid_mbr(header, {"start": 2048, "size": 1046528})
 
 
 class PiSourceIntegrityTests(unittest.TestCase):

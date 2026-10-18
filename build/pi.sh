@@ -63,6 +63,7 @@ PY
 truncate -s 8G "$image"
 # The validated layout has one firmware partition followed by Linux root.
 printf ',+\n' | sfdisk --no-reread -N "$root_partition" "$image"
+python3 "$project/build/pi-layout.py" "$image" > "$work/resized-layout.json"
 loop=$(losetup --find --show --partscan "$image")
 udevadm settle
 boot_device="${loop}p${boot_partition}"

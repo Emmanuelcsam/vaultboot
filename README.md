@@ -109,13 +109,14 @@ or remote server dependency after setup.
 ```sh
 python3 -m unittest discover -s tests -v
 # Linux x86-64 host with Docker, enough disk space, and permission to use Docker:
-VAULTBOOT_VERSION=0.1.0 ./scripts/build.sh ./artifacts
+VAULTBOOT_VERSION=0.1.0-preview.1 ./scripts/build.sh ./artifacts
 ```
 
 Building uses a privileged Docker container to construct a Debian chroot.
 Use a trusted disposable build machine; do not give this permission to
 untrusted pull requests. Runtime processes do not run in that container.
 See [architecture](docs/architecture.md) and [release procedure](docs/releasing.md).
+The separate ARM64 image has its own [Raspberry Pi build instructions](docs/building-pi.md).
 
 Original project code is MIT licensed. Third-party packages keep their own
 licenses. Every binary release must include its corresponding Debian sources,
