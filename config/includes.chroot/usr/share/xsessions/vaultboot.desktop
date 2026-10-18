@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Vaultboot
+Comment=A minimal writing session for Obsidian
+Exec=/usr/local/bin/vaultboot-session
+TryExec=/usr/local/bin/vaultboot-session
+Type=Application
+DesktopNames=Vaultboot

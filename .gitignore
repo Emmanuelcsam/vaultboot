@@ -1,0 +1,11 @@
+artifacts/
+out/
+build-output/
+__pycache__/
+*.pyc
+*.iso
+*.img
+*.img.gz
+*.qcow2
+*.log
+.venv/

@@ -1,0 +1,24 @@
+Debian corresponding-source archives
+===================================
+
+The numbered source.debian.tar.gz.part-* files contain the exact Debian package
+source archives collected by live-build for this image. Binary firmware may have
+only the vendor material supplied in Debian's source package. Package copyright
+and license notices remain in /usr/share/doc inside the booted image.
+
+The source.live.tar.gz.part-* files contain the live-build configuration archive.
+The Vaultboot repository and release source tag contain all project scripts.
+
+Verify SHA256SUMS before extracting. Reassemble each series in numeric order:
+
+  cat vaultboot-*-amd64-source.debian.tar.gz.part-* > debian-source.tar.gz
+  cat vaultboot-*-amd64-source.live.tar.gz.part-* > live-config-source.tar.gz
+  tar -xzf debian-source.tar.gz
+  tar -xzf live-config-source.tar.gz
+
+Use a directory containing one release only when running these commands.
+Each part is at most 1,700 MiB, below GitHub's per-asset limit.
+These source artifacts must stay available alongside the corresponding images.
+
+Obsidian is proprietary and is NOT included in these images or archives. The
+first-run installer obtains it directly from its publisher for the user.

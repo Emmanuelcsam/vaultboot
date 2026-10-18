@@ -1,0 +1,87 @@
+name: Check and build Vaultboot
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Artifact version (letters, digits, dots and hyphens)
+        default: dev
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install small image-test tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xorriso isolinux e2fsprogs
+      - name: Check shell syntax
+        run: |
+          bash -n scripts/build.sh build/build-in-container.sh
+          sh -n config/hooks/live/0100-vaultboot.hook.chroot
+      - name: Test runtime and disk-image safety
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+
+  images:
+    needs: checks
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Select version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$INPUT_VERSION"
+          fi
+          [[ "$version" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$ ]]
+          echo "VAULTBOOT_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Build Debian images and corresponding sources
+        env:
+          BUILD_CPUS: '2'
+          BUILD_MEMORY: 6g
+        run: scripts/build.sh "$GITHUB_WORKSPACE/dist"
+      - name: Verify artifact checksums
+        run: cd dist && sha256sum -c SHA256SUMS
+      - name: Save artifacts for boot testing
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: vaultboot-${{ env.VAULTBOOT_VERSION }}-amd64
+          path: dist/
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+      - name: Stage a draft prerelease for tagged builds
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > "$RUNNER_TEMP/release-notes.txt" <<'EOF'
+          This draft is not a tested public release. Before publishing, record BIOS and UEFI boots, persistence after reboot, Wi-Fi, and successful first-run Obsidian installation and launch.
+
+          Flash the extracted .img from the .img.gz download for 4 GiB of persistent storage. The .iso is an ephemeral live session unless a separate persistence volume is provided. Obsidian downloads from its publisher on first run; it is not redistributed in these images. Secure Boot is not supported.
+
+          Keep all corresponding-source parts alongside the images. See SOURCES.txt and verify SHA256SUMS.
+          EOF
+          gh release create "$GITHUB_REF_NAME" --draft --prerelease \
+            --title "Vaultboot $VAULTBOOT_VERSION (testing)" \
+            --notes-file "$RUNNER_TEMP/release-notes.txt" dist/*
