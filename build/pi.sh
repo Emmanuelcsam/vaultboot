@@ -136,8 +136,11 @@ mkdir "$output/boot-test"
 kernel=$(find "$root/boot" -maxdepth 1 -type f -name 'vmlinuz-*' | sort -V | tail -1)
 test -n "$kernel"
 kernel_version=${kernel##*/vmlinuz-}
+grep -Eq '^CONFIG_DRM_VC4=(y|m)$' "$root/boot/config-$kernel_version"
+grep -Eq '^CONFIG_DRM_VIRTIO_GPU=(y|m)$' "$root/boot/config-$kernel_version"
 cp "$kernel" "$output/boot-test/vmlinuz"
 cp "$root/boot/initrd.img-$kernel_version" "$output/boot-test/initrd.img"
+cp "$root/boot/config-$kernel_version" "$output/boot-test/config"
 chroot "$root" dpkg-query -W '-f=${binary:Package}\t${Version}\t${source:Package}\t${source:Version}\n' |
     LC_ALL=C sort > "$output/$prefix.packages.tsv"
 python3 "$project/build/pi-sources.py" --chroot "$root" --output "$work/sources"
