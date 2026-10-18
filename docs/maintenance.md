@@ -8,6 +8,10 @@ file containing `/ union`. Debian live-boot overlays this writable storage on
 the base system. Notes, the downloaded Obsidian app, system changes, and Wi-Fi
 configuration survive reboot.
 
+The separate `pi3-arm64.img.gz` uses an ordinary writable ext4 root filesystem
+on microSD. It does not use the PC live overlay or its persistence label. Its
+notes, application, settings, and network configuration are saved there.
+
 ## First-run settings
 
 The preview starts with a US English keyboard layout. If your keyboard uses
@@ -40,13 +44,17 @@ Check free space in a maintenance terminal:
 df -h / /home/writer
 ```
 
-The image includes 4 GiB of writable storage in addition to the compressed OS.
+The PC image includes 4 GiB of writable storage in addition to the compressed OS.
 The downloaded app uses some of it. Large vaults or package upgrades may fill
 the remainder. Use a larger external data
 drive for large attachments, or expand the persistence partition offline using
 a partition editor on another Linux system after backing it up. Partition
 editing is an advanced task; the system never automatically reformats or grows
 your disks.
+
+The Pi image occupies 8 GiB, including its firmware partition and writable
+root filesystem. The OS, application, and notes share that space. A larger
+microSD does not automatically grow the filesystem in this preview.
 
 Do not have two Vaultboot USBs attached during startup: they share the
 persistence label, so the wrong writable volume could be selected. Shut down
@@ -71,15 +79,18 @@ sudo apt update
 sudo apt upgrade
 ```
 
-Review proposed package changes and available storage. The boot kernel/initrd
+Review proposed package changes and available storage. On PCs the boot kernel/initrd
 live in the read-only image: a package upgrade does **not** replace those boot
 files. For kernel fixes or a new Vaultboot base, back up your data, flash the new
-release, and restore your vaults. No seamless base-image upgrade is claimed.
+release, and restore your vaults. Pi boot files are writable, but kernel/firmware
+upgrades need hardware testing; backing up and reflashing is the supported
+preview base-update procedure for both images. No seamless base-image upgrade
+is claimed.
 
 ## Recovery
 
 Use `Ctrl+Alt+S` for network setup or diagnostics and `Ctrl+Alt+T` for the terminal.
-If graphics fails, try appending `nomodeset` to the live entry's kernel command
+On PCs, if graphics fails, try appending `nomodeset` to the live entry's kernel command
 line in the bootloader menu. In UEFI's GRUB menu press `e`, edit the line
 beginning with `linux`, then press `Ctrl+X` to boot. In the BIOS boot menu,
 press `Tab` on the live entry to edit its options, then `Enter` to boot. This

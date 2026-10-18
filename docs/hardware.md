@@ -8,7 +8,7 @@ cannot boot every PC, Raspberry Pi, or other ARM device.
 | --- | --- | --- |
 | Intel/AMD x86-64 PC, legacy BIOS or 64-bit UEFI | `amd64` preview | USB boot; Secure Boot disabled; working Linux drivers. See the release test report. |
 | Chromebook already configured to boot ordinary Linux | Same `amd64` image if its CPU is x86-64 | Use its existing Linux boot method. Model-specific touch, sound, sleep, and special keys still need testing. |
-| Raspberry Pi 3 Model B / B+, 1 GB | Separate ARM64 image in development; **not released or hardware validated yet** | Pi-specific boot files and 64-bit userspace; initial target is microSD. Memory is limited. |
+| Raspberry Pi 3 Model B / B+, 1 GB | Separate **experimental ARM64 preview; physical hardware unverified** | Pi-specific boot files and 64-bit userspace; use a 16 GB or larger microSD. Memory is limited. |
 | Raspberry Pi 3 Model A+, 512 MB | Untested | No claim that Obsidian is usable within its smaller memory. |
 | Other ARM devices, ARM Chromebooks, Apple Silicon | No supported image currently | An ARM64 application alone does not supply device-specific boot support or drivers. |
 | 32-bit-only PCs or PCs requiring 32-bit UEFI | Unsupported by the current image | The PC image and Obsidian package are 64-bit. |
@@ -36,8 +36,8 @@ and Pi-specific boot support; the `amd64` image cannot boot a Pi.
 [64-bit OS support](https://www.raspberrypi.com/news/raspberry-pi-os-64-bit/),
 [Obsidian downloads](https://obsidian.md/download).
 
-**The Pi image is in development, not a released download.** Future release
-notes must distinguish image checks, emulation, and actual Pi testing.
+**The Pi image is experimental and has not been tested on a physical Pi.** The
+release test report separates image checks, emulation, and actual hardware testing.
 Obsidian, large vaults, and plugins may exhaust 1 GB. Smooth operation has not
 been established; begin evaluation with a small vault and no plugins. The
 512 MB Model A+ remains untested.

@@ -9,12 +9,26 @@ Debian handles the hardware, networking, sound, and storage underneath.
 This is an independent community project, not an official Obsidian product.
 Obsidian itself is downloaded from its official releases during first setup;
 it is not redistributed in our images. After setup, your app, settings, and
-notes stay on the USB drive and work offline.
+notes stay on the USB drive or microSD card and work offline.
+
+![Obsidian running in Vaultboot](docs/assets/obsidian-preview.png)
+
+Actual preview image running in a PC virtual machine after setup.
 
 **Early preview:** see the release's test report for what has actually been
 tested. Compatibility with your particular PC is not guaranteed.
 
 ## Download and boot
+
+Choose the image for your device:
+
+| Device | Download | Storage |
+| --- | --- | --- |
+| 64-bit Intel/AMD PC | [PC USB image](https://github.com/Emmanuelcsam/vaultboot/releases/download/v0.1.0-preview.1/vaultboot-0.1.0-preview.1-amd64.img.gz) | 8 GB or larger USB |
+| Raspberry Pi 3B / 3B+ | [Experimental Pi image](https://github.com/Emmanuelcsam/vaultboot/releases/download/v0.1.0-preview.1/vaultboot-0.1.0-preview.1-pi3-arm64.img.gz) | 16 GB or larger microSD |
+
+Get `SHA256SUMS` and the test report from the [release page](https://github.com/Emmanuelcsam/vaultboot/releases/tag/v0.1.0-preview.1).
+Physical hardware has not been validated. The Pi image is experimental.
 
 These steps are for the **Intel/AMD PC image**. Raspberry Pi needs a separate
 ARM64 image. Check the [hardware guide](docs/hardware.md) first.
@@ -50,6 +64,19 @@ The separate **`.iso` is a temporary demo / VM image**. Without a persistence
 volume, changes disappear at shutdown; the setup screen warns about this.
 Choose the USB image for everyday use.
 
+### Raspberry Pi
+
+Extract the separate **`pi3-arm64.img.gz`**, then write its `.img` to a
+**16 GB or larger microSD card** using a custom-image option in your image writer.
+Flashing erases that card. Insert it into a Pi 3B or 3B+, connect a display,
+keyboard, mouse, network, and suitable power supply, then boot. First setup
+downloads Obsidian; later boots use the installed copy. Notes and settings live
+on the writable microSD filesystem.
+
+This preview needs physical Pi testing. Its 1 GB RAM is a serious constraint;
+start with a small vault and no community plugins. It is not an image for
+arbitrary ARM devices.
+
 ## Hardware
 
 - The current PC image targets **64-bit Intel or AMD PCs** with USB boot.
@@ -60,8 +87,8 @@ Choose the USB image for everyday use.
 - Common Intel/AMD graphics and common Wi-Fi firmware are included. Unusual
   hardware may need extra drivers. Ethernet is the simplest setup connection.
 
-A separate **Raspberry Pi 3 ARM64 image is in development and is not released
-yet**; its 1 GB memory makes it an experimental target. The PC image does not
+A separate **experimental Raspberry Pi 3 ARM64 image** is provided; its 1 GB
+memory makes it a constrained target. The PC image does not
 run on a Pi. See the [compatibility matrix](docs/hardware.md) for architecture,
 memory, and boot limits.
 
@@ -88,17 +115,19 @@ only backup.
 ## Keep your notes safe
 
 This is a personal appliance with automatic sign-in, **not a locked public kiosk**.
-Someone with physical access can read its unencrypted USB data and use its
+Someone with physical access can read its unencrypted USB or microSD data and use its
 maintenance tools. The live account is `writer`, password `live`, with local sudo
 access. No SSH server is installed. Change the password with `passwd` if desired;
 automatic graphical sign-in remains enabled.
 
 Back up `~/Notes` and any other vaults to another drive or backup service. A
-bootable USB is not a backup. The image includes a fixed 4 GiB writable partition in addition to the base OS;
-a larger USB does not automatically enlarge it. See
+bootable USB is not a backup. The PC image includes a fixed 4 GiB writable
+partition in addition to the base OS. The Pi image has an 8 GiB filesystem layout
+shared by the OS, application, and notes. Larger media do not automatically
+enlarge these filesystems. See
 [storage and maintenance](docs/maintenance.md) for capacity and upgrades.
 
-**Reflashing destroys the USB's notes and settings.** Back them up first.
+**Reflashing destroys that USB drive or microSD card's notes and settings.** Back them up first.
 
 ## Build and contribute
 

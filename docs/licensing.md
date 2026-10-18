@@ -32,8 +32,9 @@ hardware support. Package copyright/license notices remain installed under
 Follow [Debian's CD redistribution requirements](https://www.debian.org/CD/vendors/legal):
 publish matching source archives alongside the binary image. A link to a
 rolling Debian mirror is not a substitute for retaining the corresponding
-source used by a particular release. `live-build` produces the source archive;
-the build splits large archives into downloadable release parts.
+source used by a particular release. The PC build uses `live-build`; the Pi build
+collects the exact installed and incorporated package sources. Both builds
+split large source archives into downloadable release parts.
 Keep every source part and its checksum with each binary release.
 Firmware packages retain their upstream license terms; some contain
 redistributable binary firmware without source.
