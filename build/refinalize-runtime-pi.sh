@@ -82,7 +82,7 @@ cp -r "$previous/boot-test" "$output/"
 git -C "$project" archive --format=tar "$OVERLAY_COMMIT" | gzip -n -1 > "$output/$prefix-source.vaultboot.tar.gz"
 cp "$previous/LICENSE.txt" "$previous/SOURCES.txt" "$output/"
 # Retain original build provenance and distinguish the final runtime source.
-sed '/^Project source archive commit:/d; /^The source.vaultboot archive preserves/d' "$previous/BUILD-INFO.txt" > "$output/BUILD-INFO.txt"
+sed '/^Project source archive commit:/d; /^The source.vaultboot archive preserves/d; /^Offline checks: clean ext4 filesystem;/d' "$previous/BUILD-INFO.txt" > "$output/BUILD-INFO.txt"
 raw_sha=$(sha256sum "$image" | cut -d' ' -f1)
 printf 'Runtime overlay commit: %s\nProject source archive commit: %s\nPrevious raw image SHA256: %s\nFinal raw image SHA256: %s\nOverlay: only the files in RUNTIME-OVERLAY.json changed. Installed package manifest, firmware, kernel/initramfs and corresponding Debian source archives are unchanged.\nThe final project archive is a complete git archive, including the exact runtime overlay and the refinalization helper. The only allowed package-list/build-script adjustment adds fdisk for the PC installer and excludes it from Pi; effective Pi package selection is verified unchanged.\n' \
     "$OVERLAY_COMMIT" "$OVERLAY_COMMIT" "$PREVIOUS_RAW_SHA256" "$raw_sha" >> "$output/BUILD-INFO.txt"
