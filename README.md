@@ -20,7 +20,8 @@ tested. Compatibility with your particular PC is not guaranteed.
    the **`vaultboot-…-amd64.img.gz`** file and `SHA256SUMS`. The source archives are for developers;
    you do not need them to use the system.
 2. Verify the download against `SHA256SUMS`, then extract the `.gz` file to get
-   the `.img`. Allow at least 8 GiB free space for extraction.
+   the `.img`. The raw image is about 4.7 GiB; allow at least 8 GiB free space
+   for extraction.
 3. Use an image writer such as [Raspberry Pi Imager](https://www.raspberrypi.com/software/)
    (choose a custom image) or [balenaEtcher](https://etcher.balena.io/) to write the
    `.img` to an **8 GB or larger USB drive**. Check the selected drive carefully:
@@ -34,6 +35,13 @@ tested. Compatibility with your particular PC is not guaranteed.
 The USB image includes a writable partition for notes and settings. It boots
 without installing to or erasing the PC's internal drive. Leave the USB plugged
 in while using it. Use the system menu to shut down before removing it.
+If Windows or macOS offers to format or initialize the USB after flashing,
+cancel: its Linux storage is intentional.
+
+The preview starts with a US English keyboard layout. For another layout,
+follow [first-run settings](docs/maintenance.md#first-run-settings) before
+entering a Wi-Fi password. That section also explains the keyboard controls
+in the network setup screen.
 
 The separate **`.iso` is a temporary demo / VM image**. Without a persistence
 volume, changes disappear at shutdown; the setup screen warns about this.

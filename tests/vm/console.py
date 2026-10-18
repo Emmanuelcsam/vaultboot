@@ -130,10 +130,10 @@ class VM:
     def read_until(self, marker, timeout=180):
         return self.read_until_any([marker], timeout)[0]
 
-    def login(self):
+    def login(self, timeout=300):
         # Debian live-config only autologins tty1..6. ttyS0 normally asks for
         # writer/live, but accept an existing shell for manual recovery too.
-        _, marker = self.read_until_any([b"login:", b"writer@vaultboot:"], 300)
+        _, marker = self.read_until_any([b"login:", b"writer@vaultboot:"], timeout)
         if marker == b"login:":
             self.serial.sendall(b"writer\n")
             _, marker = self.read_until_any([b"Password:", b"writer@vaultboot:"], 20)
@@ -223,7 +223,7 @@ def main():
     vm = VM(args.image, work, args.firmware, args.offline)
     try:
         try:
-            emit({"event": "login", "result": vm.login()})
+            emit({"event": "login", "result": vm.login(timeout=45)})
         except Exception as error:
             failure = {"event": "login", "error": str(error)}
             try:
@@ -254,7 +254,7 @@ def main():
                     elif kind == "key":
                         result = vm.qmp("human-monitor-command", {"command-line": "sendkey " + command["key"]})
                     elif kind == "login":
-                        result = vm.login()
+                        result = vm.login(command.get("timeout", 300))
                     elif kind == "reboot":
                         result = vm.reboot(command.get("timeout", 300))
                     elif kind == "network":

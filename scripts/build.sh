@@ -21,16 +21,20 @@ epoch=${SOURCE_DATE_EPOCH:-$(git -C "$root" log -1 --format=%ct 2>/dev/null || d
 [[ $epoch =~ ^[0-9]+$ ]] || { echo 'Invalid SOURCE_DATE_EPOCH.' >&2; exit 1; }
 image=${BUILDER_IMAGE:-vaultboot-builder:trixie}
 docker build --pull -t "$image" -f "$root/build/Dockerfile" "$root/build"
+work_volume="vaultboot-build-$(date +%s)-$$-$RANDOM"
+docker volume create --label "org.vaultboot.commit=$commit" "$work_volume" >/dev/null
+trap 'status=$?; if (( status != 0 )); then printf "Build workspace preserved in Docker volume: %s\n" "$work_volume" >&2; fi' EXIT
 # Privilege is needed for debootstrap/chroot mounts. It grants host-device access:
-# run only trusted project code on a disposable build machine. --rm removes the
-# private work volume; scripts operate on image files and do not format host disks.
+# run only trusted project code on a disposable build machine. Scripts operate on
+# image files and do not format host disks. Keep the named work volume on failure.
 # A bounded descriptor limit also avoids apt's expensive close-descriptor fallback
 # when live-build invokes apt after temporarily unmounting the chroot's /proc.
 docker run --rm --privileged --cpus "$cpus" --memory "$memory" --memory-swap "$memory" \
     --ulimit nofile=65536:65536 \
     --mount "type=bind,src=$root,dst=/src,readonly" \
     --mount "type=bind,src=$output,dst=/out" \
-    --mount type=volume,destination=/work \
+    --mount "type=volume,src=$work_volume,destination=/work" \
     -e "VAULTBOOT_VERSION=$version" -e "BUILD_CPUS=$cpus" -e "SOURCE_DATE_EPOCH=$epoch" \
     -e "BUILD_COMMIT=$commit" -e "OUTPUT_UID=$(id -u)" -e "OUTPUT_GID=$(id -g)" \
     "$image" 2>&1 | tee "$output/build.log"
+docker volume rm "$work_volume" >/dev/null

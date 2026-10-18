@@ -1,0 +1,9 @@
+#!/bin/sh
+# live-build runs binary hooks from the generated binary/ directory.
+set -eu
+test -f isolinux/isolinux.cfg
+test -f boot/grub/config.cfg
+grep -Eq '^timeout[[:space:]]+[0-9]+$' isolinux/isolinux.cfg
+sed -i -E 's/^timeout[[:space:]]+[0-9]+$/timeout 50/' isolinux/isolinux.cfg
+sed -i -E '/^set timeout(_style)?=/d' boot/grub/config.cfg
+printf '\nset timeout_style=menu\nset timeout=5\n' >> boot/grub/config.cfg

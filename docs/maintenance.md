@@ -2,11 +2,37 @@
 
 ## Persistence
 
-Use the persistent `usb.img.gz` release for daily work. It contains the live
+Use the persistent `vaultboot-…-amd64.img.gz` release for daily work. It contains the live
 system and an ext4 volume labelled `vaultboot-data`, with a `persistence.conf`
 file containing `/ union`. Debian live-boot overlays this writable storage on
 the base system. Notes, the downloaded Obsidian app, system changes, and Wi-Fi
 configuration survive reboot.
+
+## First-run settings
+
+The preview starts with a US English keyboard layout. If your keyboard uses
+another layout, press `Ctrl+Alt+T` and set it before entering a Wi-Fi password.
+For example, this selects a UK layout for the current graphical session:
+
+```sh
+setxkbmap gb
+```
+
+Use your layout code in place of `gb`, such as `de`, `fr`, or `es`. To configure
+the saved default, run `sudo dpkg-reconfigure keyboard-configuration`, choose
+your keyboard/layout, then restart through the system menu. The saved setting
+requires persistent storage. Set your time zone with `sudo dpkg-reconfigure tzdata`
+if the default UTC time is unsuitable.
+
+For Wi-Fi, choose **Connect Wi-Fi / network** in setup, then **Activate a
+connection**. Use arrow keys to select your network, `Tab` to move between
+controls, and `Enter` to activate it. Enter the Wi-Fi password, then use `Back`
+and `Quit` to return to setup and choose **Download Obsidian**. A network that
+requires signing in through a web page needs another connection for setup,
+because this image has no browser. A wired Ethernet connection is simplest
+when an old Wi-Fi adapter is unsupported.
+
+## Available space
 
 Check free space in a maintenance terminal:
 
@@ -53,8 +79,12 @@ release, and restore your vaults. No seamless base-image upgrade is claimed.
 ## Recovery
 
 Use `Ctrl+Alt+S` for network setup or diagnostics and `Ctrl+Alt+T` for the terminal.
-If graphics fails, try a firmware boot option with `nomodeset`; hardware GPU
-support varies. A text console is available with `Ctrl+Alt+F2` (account `writer`,
+If graphics fails, try appending `nomodeset` to the live entry's kernel command
+line in the bootloader menu. In UEFI's GRUB menu press `e`, edit the line
+beginning with `linux`, then press `Ctrl+X` to boot. In the BIOS boot menu,
+press `Tab` on the live entry to edit its options, then `Enter` to boot. This
+change applies only to that boot; hardware GPU support varies.
+A text console is available with `Ctrl+Alt+F2` (account `writer`,
 password `live`). Return to graphics with `Ctrl+Alt+F7`, or the active display VT.
 
 Logs are kept under `~/.local/state/vaultboot`. They may contain local file names;

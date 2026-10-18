@@ -16,6 +16,7 @@ export SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(date +%s)}
 [[ $SOURCE_DATE_EPOCH =~ ^[0-9]+$ ]] || exit 1
 trap 'chown -R "${OUTPUT_UID:-0}:${OUTPUT_GID:-0}" /out' EXIT
 cd /work
+python3 /src/build/patch-live-build.py
 
 lb config --mode debian --distribution trixie --architectures amd64 \
     --binary-image iso-hybrid --image-name vaultboot \
@@ -37,14 +38,12 @@ printf '\nMKSQUASHFS_OPTIONS="-b 1M -processors %s -mem 1G"\n' "$cpus" >> config
 # Local tests may import included Python modules. Never bake those caches into the OS.
 find config -type d -name __pycache__ -prune -exec rm -rf -- {} +
 find config -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
-lb build
-
-# live-build warns and continues on missing source downloads. Distribution must fail.
-if [[ -e source/missing-source.txt ]]; then
-    cat source/missing-source.txt >&2
-    echo 'Refusing release: corresponding Debian source downloads are incomplete.' >&2
-    exit 1
-fi
+lb bootstrap
+lb chroot
+lb installer
+lb binary
+# Preserve the binary for parallel boot validation even if source fetching fails.
+# SHA256SUMS and a successful build are emitted only after the complete source set.
 iso=$(find . -maxdepth 1 -type f -name '*.hybrid.iso' -print -quit)
 [[ -n $iso && -s $iso ]] || { echo 'No hybrid ISO produced.' >&2; exit 1; }
 prefix="vaultboot-${version}-amd64"
@@ -54,6 +53,16 @@ chroot chroot dpkg-query -W '-f=${binary:Package}\t${Version}\t${source:Package}
 python3 /src/scripts/make-usb-image.py --iso "/out/${prefix}.iso" \
     --output "/out/${prefix}.img" --persistence-mib 4096
 gzip -n -1 "/out/${prefix}.img"
+echo 'Binary images staged for boot validation. Source collection is still required before distribution.'
+
+lb source
+# live-build warns and continues on missing source downloads. Distribution must fail.
+if [[ -e source/missing-source.txt ]]; then
+    cat source/missing-source.txt >&2
+    echo 'Refusing release: corresponding Debian source downloads are incomplete.' >&2
+    exit 1
+fi
+python3 /src/build/source-selection.py --verify source/debian
 
 shopt -s nullglob
 sources=(vaultboot-source.debian.tar* vaultboot-source.live.tar*)
@@ -67,6 +76,7 @@ cp /src/build/SOURCES.txt /out/SOURCES.txt
 printf 'Vaultboot version: %s\nDebian suite: trixie\nArchitecture: amd64\nSOURCE_DATE_EPOCH: %s\nBuild commit: %s\n' \
     "$version" "$SOURCE_DATE_EPOCH" "${BUILD_COMMIT:-unknown}" > /out/BUILD-INFO.txt
 dpkg-query -W live-build debootstrap xorriso >> /out/BUILD-INFO.txt
+printf 'Builder source corrections: GRUB EFI maps to grub2; Built-Using and Static-Built-Using exact sources included (build/patch-live-build.py).\n' >> /out/BUILD-INFO.txt
 cd /out
 sha256sum -- *.iso *.img.gz *.layout.json *.packages.tsv *.part-* SOURCES.txt BUILD-INFO.txt > SHA256SUMS
 echo 'Build complete. Boot validation is required before publishing a non-draft release.'
