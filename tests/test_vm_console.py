@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 import socket
+import threading
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -59,6 +60,49 @@ class ConsoleTests(unittest.TestCase):
         vm.qmp_stream.readline.return_value = b""
         with self.assertRaisesRegex(EOFError, "monitor closed"):
             vm.qmp("query-status")
+
+    def monitor_vm(self):
+        vm = self.vm()
+        vm.qmp_socket, qmp_peer = socket.socketpair()
+        vm.serial, serial_peer = socket.socketpair()
+        for connection in (vm.qmp_socket, qmp_peer, vm.serial, serial_peer):
+            self.addCleanup(connection.close)
+        vm.qmp_stream = vm.qmp_socket.makefile("rwb", buffering=0)
+        self.addCleanup(vm.qmp_stream.close)
+        return vm, qmp_peer, serial_peer
+
+    def test_reset_wait_drains_serial_so_guest_can_finish_shutdown(self):
+        vm, qmp_peer, serial_peer = self.monitor_vm()
+        serial_peer.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1024)
+        serial_peer.settimeout(2)
+        payload = b"shutdown progress\n" * 16384
+        failures = []
+
+        def guest():
+            try:
+                # RESET cannot happen until the UART output has been consumed.
+                serial_peer.sendall(payload)
+                qmp_peer.sendall(b'{"event":"RESET"}\n')
+            except Exception as error:
+                failures.append(error)
+
+        worker = threading.Thread(target=guest, daemon=True)
+        worker.start()
+        try:
+            self.assertEqual(vm.wait_event("RESET", 3), {"event": "RESET"})
+        finally:
+            worker.join(timeout=3)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(failures, [])
+        self.assertTrue(vm.log.getvalue())
+        self.assertTrue(payload.startswith(vm.log.getvalue()))
+
+    def test_event_timeout_leaves_monitor_usable_for_diagnostics(self):
+        vm, qmp_peer, _ = self.monitor_vm()
+        with self.assertRaisesRegex(TimeoutError, "did not emit RESET"):
+            vm.wait_event("RESET", 0.02)
+        qmp_peer.sendall(b'{"event":"RESET"}\n')
+        self.assertEqual(vm.wait_event("RESET", 1), {"event": "RESET"})
 
     def test_shell_marker_is_never_present_in_echoed_input_and_lines_are_bounded(self):
         vm = self.vm()

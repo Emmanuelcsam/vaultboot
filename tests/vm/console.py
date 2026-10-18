@@ -108,18 +108,28 @@ class VM:
 
     def wait_event(self, event, timeout=180):
         deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
+        while True:
             for index, value in enumerate(self.events):
                 if value.get("event") == event:
                     return self.events.pop(index)
-            self.qmp_socket.settimeout(max(0.1, deadline - time.monotonic()))
-            try:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("QEMU did not emit " + event)
+            # The emulated UART can block guest shutdown if its socket fills.
+            # Keep draining it while waiting for the monitor's reset event.
+            # select also avoids poisoning SocketIO with an idle read timeout.
+            ready, _, _ = select.select([self.qmp_socket, self.serial], [], [], min(1, remaining))
+            if self.qmp_socket in ready:
                 value = self.qmp_read()
-            finally:
-                self.qmp_socket.settimeout(15)
-            if "event" in value:
-                self.events.append(value)
-        raise TimeoutError("QEMU did not emit " + event)
+                if value.get("event") == event:
+                    return value
+                if "event" in value:
+                    self.events.append(value)
+            if self.serial in ready:
+                chunk = self.serial.recv(65536)
+                if not chunk:
+                    raise EOFError("Guest serial console closed while waiting for " + event)
+                self.log.write(chunk)
 
     def read_until_any(self, markers, timeout=180):
         deadline = time.monotonic() + timeout
