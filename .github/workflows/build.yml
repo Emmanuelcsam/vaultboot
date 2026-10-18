@@ -20,6 +20,8 @@ jobs:
   checks:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    outputs:
+      release-exists: ${{ steps.release.outputs.exists }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -32,10 +34,20 @@ jobs:
           sh -n config/hooks/live/0100-vaultboot.hook.chroot
       - name: Test runtime and disk-image safety
         run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Detect an already prepared release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]] && gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
 
   images:
     needs: checks
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/v') && needs.checks.outputs.release-exists != 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     permissions:

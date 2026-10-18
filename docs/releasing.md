@@ -21,3 +21,7 @@
 The workflow's release remains a draft until reviewed. A passing build does
 not prove boot or hardware compatibility. For the initial release use a
 prerelease label until wider hardware testing is available.
+
+Tag-triggered builds skip image construction if that tag already has a prepared
+release, avoiding a duplicate build when uploading a locally tested candidate.
+A manual workflow run always builds a fresh candidate.
