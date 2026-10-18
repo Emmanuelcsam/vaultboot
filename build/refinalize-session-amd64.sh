@@ -1,0 +1,66 @@
+#!/bin/bash
+# Apply one verified session-file fix to an already source-complete PC build.
+set -Eeuo pipefail
+umask 022
+cd /work
+[[ $(id -u) == 0 && -d /previous && -d /out && -d /src ]]
+[[ -z $(find /out -mindepth 1 -maxdepth 1 -print -quit) ]]
+[[ -f .build/source_debian && -f .build/source_tar && -f .build/binary_iso ]]
+[[ ! -s source/missing-source.txt ]]
+[[ ${OVERLAY_COMMIT:-} =~ ^[0-9a-f]{40}$ ]]
+[[ ${OVERLAY_SESSION_SHA256:-} =~ ^[0-9a-f]{64}$ ]]
+[[ ${PREVIOUS_SESSION_SHA256:-} =~ ^[0-9a-f]{64}$ ]]
+export SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:?Set the original build epoch}
+[[ $SOURCE_DATE_EPOCH =~ ^[0-9]+$ ]]
+version=${VAULTBOOT_VERSION:-0.1.0-preview.1}
+[[ $version =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$ ]]
+prefix="vaultboot-${version}-amd64"
+(cd /previous && sha256sum --check --quiet SHA256SUMS)
+python3 /src/build/source-selection.py --verify source/debian
+new_session=/src/config/includes.chroot/usr/local/bin/vaultboot-session
+printf '%s  %s\n' "$OVERLAY_SESSION_SHA256" "$new_session" | sha256sum --check
+stage=$(mktemp -d /work/session-final.XXXXXXXX)
+xorriso -osirrox on -indev "/previous/$prefix.iso" \
+    -extract /live/filesystem.squashfs "$stage/original.squashfs"
+unsquashfs -processors 2 -d "$stage/root" "$stage/original.squashfs"
+for destination in "$stage/root/usr/local/bin/vaultboot-session" \
+    config/includes.chroot/usr/local/bin/vaultboot-session chroot/usr/local/bin/vaultboot-session; do
+    printf '%s  %s\n' "$PREVIOUS_SESSION_SHA256" "$destination" | sha256sum --check
+done
+for destination in "$stage/root/usr/local/bin/vaultboot-session" \
+    config/includes.chroot/usr/local/bin/vaultboot-session chroot/usr/local/bin/vaultboot-session; do
+    install -m 0755 "$new_session" "$destination"
+    touch -d "@$SOURCE_DATE_EPOCH" "$destination"
+done
+mksquashfs "$stage/root" "$stage/final.squashfs" \
+    -noappend -no-progress -comp xz -b 1M -processors 2 -mem 1G
+mv "$stage/final.squashfs" binary/live/filesystem.squashfs
+lb binary_checksums --force
+checksum_maps=()
+for checksum in binary/*sum.txt; do
+    [[ -f $checksum ]] || continue
+    checksum_maps+=(-map "/work/$checksum" "/${checksum##*/}")
+done
+(( ${#checksum_maps[@]} > 0 ))
+xorriso -indev "/previous/$prefix.iso" -outdev "/out/$prefix.iso" \
+    -boot_image any replay -map /work/binary/live/filesystem.squashfs /live/filesystem.squashfs \
+    "${checksum_maps[@]}" -commit -end
+python3 /src/scripts/make-usb-image.py --iso "/out/$prefix.iso" \
+    --output "/out/$prefix.img" --persistence-mib 4096
+gzip -n -1 "/out/$prefix.img"
+cp "/previous/$prefix.packages.tsv" /out/
+cp /previous/*-source.debian.tar.gz.part-* /out/
+lb source_live --force
+lb source_checksums --force
+tar cf "$stage/source.live.tar" --sort=name source/live
+gzip -n -1 "$stage/source.live.tar"
+split --bytes=1700M --numeric-suffixes=0 --suffix-length=3 "$stage/source.live.tar.gz" \
+    "/out/$prefix-source.live.tar.gz.part-"
+cp /previous/SOURCES.txt /previous/BUILD-INFO.txt /previous/LICENSE.txt /out/
+printf 'Session overlay commit: %s\nPrevious session SHA256: %s\nFinal session SHA256: %s\nOverlay: only vaultboot-session; hybrid boot records replayed and exact source.live regenerated. Debian packages and source parts unchanged.\n' \
+    "$OVERLAY_COMMIT" "$PREVIOUS_SESSION_SHA256" "$OVERLAY_SESSION_SHA256" >> /out/BUILD-INFO.txt
+sha256sum /src/build/refinalize-session-amd64.sh | sed 's|/src/||' >> /out/BUILD-INFO.txt
+cd /out
+sha256sum -- *.iso *.img.gz *.layout.json *.packages.tsv *.part-* LICENSE.txt SOURCES.txt BUILD-INFO.txt > SHA256SUMS
+sha256sum --check --quiet SHA256SUMS
+echo 'Session-corrected PC artifacts complete; final-byte cold boot verification required.'
