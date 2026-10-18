@@ -30,7 +30,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xorriso isolinux e2fsprogs
       - name: Check shell syntax
         run: |
-          bash -n scripts/build.sh build/build-in-container.sh build/pi.sh
+          bash -n scripts/build.sh build/build-in-container.sh build/pi.sh build/refinalize-runtime-pi.sh
           sh -n autoflash.sh
           sh -n config/hooks/live/0100-vaultboot.hook.chroot
           sh -n config/hooks/live/0950-install-source.hook.binary

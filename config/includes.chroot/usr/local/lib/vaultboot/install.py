@@ -27,7 +27,7 @@ SOURCE_MANIFEST = Path("/run/live/medium/vaultboot-squashfs.sha256")
 MIN_SIZE = 16 * 1024**3
 ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8",
        "LC_ALL": "C.UTF-8", "DEBIAN_FRONTEND": "noninteractive"}
-COMMANDS = ("lsblk", "udevadm", "parted", "wipefs", "mkfs.ext4", "mkfs.vfat",
+COMMANDS = ("lsblk", "udevadm", "sfdisk", "wipefs", "mkfs.ext4", "mkfs.vfat",
             "unsquashfs", "blkid", "mount", "umount", "chroot", "grub-install",
             "update-grub", "update-initramfs", "unshare", "sync")
 LIVE_PACKAGES = ("live-boot", "live-boot-initramfs-tools", "live-config",
@@ -38,6 +38,10 @@ VIRTUAL_FILESYSTEMS = {"proc", "sysfs", "tmpfs", "devtmpfs", "devpts", "ramfs",
                        "mqueue", "rpc_pipefs", "binfmt_misc", "autofs", "fusectl",
                        "nsfs", "bpf", "selinuxfs", "apparmorfs", "9p", "nfs", "nfs4",
                        "cifs", "smb3", "ceph", "afs", "fuse.sshfs"}
+PARTITION_TABLE = ("label: gpt\n"
+                   'start=1MiB, size=2MiB, type=21686148-6449-6E6F-744E-656564454649, name="BIOS"\n'
+                   'start=3MiB, size=512MiB, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name="EFI"\n'
+                   'start=515MiB, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, name="Vaultboot"\n')
 
 
 class InstallError(RuntimeError):
@@ -206,8 +210,9 @@ def protected_devices(nodes, mounted, swaps, source_id):
     return protected
 
 
-def inspect_disks(source=SOURCE):
-    run("udevadm", "settle", "--timeout=15")
+def inspect_disks(source=SOURCE, settle=True):
+    if settle:
+        run("udevadm", "settle", "--timeout=15")
     nodes = block_inventory()
     mounts, roots = namespace_mounts()
     for node in nodes.values():
@@ -249,8 +254,8 @@ def check_device_node(node):
         raise InstallError("The selected disk path is no longer the same whole block device.")
 
 
-def revalidate(selected, source=SOURCE):
-    nodes, protected = inspect_disks(source)
+def revalidate(selected, source=SOURCE, settle=True):
+    nodes, protected = inspect_disks(source, settle=settle)
     current = nodes.get(selected["id"])
     if current is None or fingerprint(current) != fingerprint(selected):
         raise InstallError("The selected disk disappeared or changed. Nothing further will be written.")
@@ -287,7 +292,9 @@ class TargetGuard:
 
     def __enter__(self):
         check_device_node(self.selected)
-        self.fd = os.open(self.selected["name"], os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        # Closing the writable descriptor also retriggers udev's IN_CLOSE_WRITE
+        # watch after the lock is released (systemd block-device locking API).
+        self.fd = os.open(self.selected["name"], os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW)
         try:
             fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self.check()
@@ -405,8 +412,10 @@ def choose_disk(nodes, protected):
 
 def partition_paths(selected):
     """Find actual kernel partition nodes, including nvme/mmc naming schemes."""
-    for _ in range(20):
-        run("udevadm", "settle", "--timeout=15")
+    # udev intentionally defers probes while TargetGuard holds the disk flock.
+    # Waiting for its queue here deadlocks against our own safety lock. Kernel
+    # sysfs and devtmpfs already expose partition identities without that probe.
+    for _ in range(40):
         nodes = block_inventory()
         current = nodes.get(selected["id"])
         if current is None or fingerprint(current) != fingerprint(selected):
@@ -414,8 +423,12 @@ def partition_paths(selected):
         partitions = {int(node["partn"]): node for node in nodes.values()
                       if node["type"] == "part" and node["parents"] == {selected["id"]}}
         if set(partitions) == {1, 2, 3}:
-            for node in partitions.values():
-                check_device_node(node)
+            try:
+                for node in partitions.values():
+                    check_device_node(node)
+            except FileNotFoundError:
+                time.sleep(0.25)
+                continue
             return {number: node["name"] for number, node in partitions.items()}
         time.sleep(0.25)
     raise InstallError("The three new target partitions did not appear; installation stopped.")
@@ -547,19 +560,20 @@ def install(selected, source=SOURCE, verified_source=None):
         # No destructive command occurs before the second live safety scan.
         guard.check()
         run("wipefs", "--all", "--", selected["name"])
-        revalidate(selected, source)
+        revalidate(selected, source, settle=False)
         guard.check()
-        run("parted", "--script", "--align", "optimal", selected["name"],
-            "mklabel", "gpt", "mkpart", "BIOS", "1MiB", "3MiB", "set", "1", "bios_grub", "on",
-            "mkpart", "EFI", "fat32", "3MiB", "515MiB", "set", "2", "esp", "on",
-            "mkpart", "Vaultboot", "ext4", "515MiB", "100%")
+        # Debian libparted invokes udevadm settle internally, which waits for
+        # our outer lock. sfdisk notifies the kernel directly. The outer guard
+        # already owns the flock, so explicitly disable an inner lock attempt.
+        run("sfdisk", "--lock=no", "--wipe=always", "--wipe-partitions=always",
+            selected["name"], input=PARTITION_TABLE)
         partitions = partition_paths(selected)
         # Automounters can react to newly created partitions. Refuse before
         # formatting if another namespace has claimed any part of the disk.
-        revalidate(selected, source)
+        revalidate(selected, source, settle=False)
         guard.check()
         run("mkfs.vfat", "-F", "32", "-n", "VBOOT-EFI", partitions[2])
-        revalidate(selected, source)
+        revalidate(selected, source, settle=False)
         guard.check()
         run("mkfs.ext4", "-F", "-L", "vaultboot-root", partitions[3])
         root_uuid, esp_uuid = uuid_for(partitions[3]), uuid_for(partitions[2])

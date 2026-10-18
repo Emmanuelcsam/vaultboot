@@ -364,6 +364,15 @@ class RuntimeTests(unittest.TestCase):
         network.assert_called_once()
         keyboard.assert_called_once()
 
+    def test_list_guidance_wraps_without_losing_words_or_paragraphs(self):
+        guidance = ("Use Keyboard layout before entering a Wi-Fi password. " * 4).strip() + "\n\nhttps://obsidian.md/terms"
+        with patch.object(runtime, "run", return_value=result("Continue")) as command:
+            self.assertEqual(self.app.choose("Set up Vaultboot", guidance, ["Continue"]), "Continue")
+        shown = next(value[7:] for value in command.call_args.args[0] if value.startswith("--text="))
+        self.assertEqual(shown.split(), guidance.split())
+        self.assertLessEqual(max(map(len, shown.splitlines())), 76)
+        self.assertIn("\n\nhttps://obsidian.md/terms", shown)
+
     def test_display_parser_excludes_disconnected_ports_and_marks_current_mode(self):
         output = "Screen 0: minimum 8 x 8\neDP-1 connected primary 1920x1080+0+0\n   1920x1080 60.00*+ 59.90\n   1280x720 60.00\nHDMI-1 disconnected\nDP-1 connected\n   1024x768 60.00+\n"
         displays = runtime.display_outputs(output)
@@ -402,7 +411,7 @@ class RuntimeTests(unittest.TestCase):
             self.app.apply_settings()
         calls = [call.args[0] for call in command.call_args_list]
         self.assertIn(["setxkbmap", "-layout", "gb", "-variant", ""], calls)
-        self.assertIn(["brightnessctl", "-c", "backlight", "set", "65%"], calls)
+        self.assertIn(["sudo", "-n", "brightnessctl", "-c", "backlight", "set", "65%"], calls)
         self.assertFalse(any("old-monitor" in call for call in calls))
 
     def test_malformed_saved_settings_do_not_launch_invalid_commands(self):
@@ -430,7 +439,10 @@ class RuntimeTests(unittest.TestCase):
         with patch.object(runtime, "probe", return_value=result("intel_backlight,backlight,500,50%,1000\n")), patch.object(runtime, "dialog", return_value=result("5")), patch.object(self.app, "checked", return_value=True) as command:
             self.app.brightness()
         self.assertEqual(self.app.settings()["brightness"], 5)
-        self.assertEqual(command.call_args.args[0][-1], "5%")
+        self.assertEqual(command.call_args.args[0], ["sudo", "-n", "brightnessctl", "-c", "backlight", "set", "5%"])
+        with patch.object(runtime, "probe", return_value=result("intel_backlight,backlight,500,50%,1000\n")), patch.object(runtime, "dialog", return_value=result("90")), patch.object(self.app, "checked", return_value=False):
+            self.app.brightness()
+        self.assertEqual(self.app.settings()["brightness"], 5)
         with patch.object(runtime, "probe", return_value=result("intel_backlight,backlight,500,50%,1000\n")), patch.object(runtime, "dialog", return_value=result("0")), patch.object(self.app, "checked") as command:
             self.app.brightness()
         command.assert_not_called()

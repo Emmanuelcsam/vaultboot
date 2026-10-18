@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import textwrap
 import time
 import urllib.parse
 import urllib.request
@@ -243,9 +244,13 @@ class Runtime:
                     LOG.warning("Saved display resolution could not be applied")
         brightness = settings.get("brightness")
         if isinstance(brightness, int) and 5 <= brightness <= 100:
-            probe(["brightnessctl", "-c", "backlight", "set", str(brightness) + "%"])
+            probe(["sudo", "-n", "brightnessctl", "-c", "backlight", "set", str(brightness) + "%"])
 
     def choose(self, title: str, text: str, choices: list[str], height: int = 440) -> str:
+        # Zenity's list label otherwise makes long prose a minimum window
+        # width, even when --width is given; keep setup usable at 800x600.
+        text = "\n".join(textwrap.fill(line, width=76, break_long_words=False, break_on_hyphens=False)
+                         for line in text.split("\n"))
         selected = run(["zenity", "--list", "--title=" + title, "--width=600", "--height=" + str(height), "--no-markup", "--text=" + text, "--column=Action", *choices], capture_output=True, text=True)
         value = selected.stdout.strip()
         return value if not selected.returncode and value in choices else ""
@@ -346,7 +351,7 @@ class Runtime:
             value = int(choice.stdout.strip())
         except ValueError:
             return
-        if not choice.returncode and 5 <= value <= 100 and self.checked(["brightnessctl", "-c", "backlight", "set", str(value) + "%"], "Brightness could not be changed. The device may not allow this user to control it."):
+        if not choice.returncode and 5 <= value <= 100 and self.checked(["sudo", "-n", "brightnessctl", "-c", "backlight", "set", str(value) + "%"], "Brightness could not be changed. The device may not allow this user to control it."):
             self.save_setting("brightness", value)
 
     def timezone(self):

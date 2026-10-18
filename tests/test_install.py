@@ -119,6 +119,36 @@ class ProtectionTests(unittest.TestCase):
             with self.assertRaisesRegex(installer.InstallError, "now unsafe"):
                 installer.revalidate(old)
 
+    def test_partition_polling_uses_kernel_nodes_without_waiting_for_own_udev_lock(self):
+        disk = node("252:16", "vdb")
+        inventory = {disk["id"]: disk}
+        for number in (1, 2, 3):
+            part = node(f"252:{16 + number}", f"vdb{number}", "part", [disk["id"]], partn=number)
+            inventory[part["id"]] = part
+        with mock.patch.object(installer, "block_inventory", return_value=inventory), \
+             mock.patch.object(installer, "check_device_node"), \
+             mock.patch.object(installer, "run") as command:
+            self.assertEqual(installer.partition_paths(disk), {1: "/dev/vdb1", 2: "/dev/vdb2", 3: "/dev/vdb3"})
+            command.assert_not_called()
+
+    def test_gpt_layout_has_bios_efi_and_full_remaining_linux_root(self):
+        lines = installer.PARTITION_TABLE.splitlines()
+        self.assertEqual(lines[0], "label: gpt")
+        self.assertEqual(len(lines), 4)
+        self.assertIn("start=1MiB, size=2MiB", lines[1])
+        self.assertIn("21686148-6449-6E6F-744E-656564454649", lines[1])
+        self.assertIn("start=3MiB, size=512MiB", lines[2])
+        self.assertIn("C12A7328-F81F-11D2-BA4B-00A0C93EC93B", lines[2])
+        self.assertIn("start=515MiB", lines[3])
+        self.assertNotIn("size=", lines[3])
+
+    def test_locked_revalidation_keeps_mount_checks_without_udev_settle(self):
+        disk = node("252:16", "vdb")
+        with mock.patch.object(installer, "inspect_disks", return_value=({disk["id"]: disk}, set())) as inspect, \
+             mock.patch.object(installer, "check_device_node"):
+            installer.revalidate(disk, settle=False)
+            inspect.assert_called_once_with(installer.SOURCE, settle=False)
+
     def test_symlink_device_path_is_rejected(self):
         with mock.patch.object(Path, "lstat", return_value=mock.Mock(st_mode=stat.S_IFLNK)):
             with self.assertRaisesRegex(installer.InstallError, "same whole block device"):

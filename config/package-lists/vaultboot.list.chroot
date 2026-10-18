@@ -69,6 +69,7 @@ grub2-common
 grub-pc-bin
 grub-efi-amd64-bin
 parted
+fdisk
 dosfstools
 squashfs-tools
 # Electron and Obsidian runtime, including audio and software GPU fallback.
