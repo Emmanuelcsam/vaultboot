@@ -29,7 +29,8 @@ def qemu_arguments(overlay, kernel, initrd, serial_path, qmp_path, offline=False
         "-qmp", f"unix:{qmp_path},server=on,wait=off",
     ]
     args += (["-nic", "none"] if offline else [
-        "-netdev", "user,id=net0", "-device", "virtio-net-pci,netdev=net0,id=nic0",
+        # Direct-kernel boot needs no optional IPXE/EFI network option ROM.
+        "-netdev", "user,id=net0", "-device", "virtio-net-pci,netdev=net0,id=nic0,romfile=",
     ])
     return args
 

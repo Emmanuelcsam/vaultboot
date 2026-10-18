@@ -43,6 +43,7 @@ class ARMConsoleTests(unittest.TestCase):
             self.assertIn("root=/dev/vda1", args[args.index("-append") + 1])
             self.assertNotIn("-enable-kvm", args)
             self.assertEqual(args[args.index("-m") + 1], "1024")
+            self.assertIn("virtio-net-pci,netdev=net0,id=nic0,romfile=", args)
             self.assertFalse(any("hostfwd" in value or "tcp:" in value for value in args))
 
     def test_reusing_an_overlay_for_a_different_candidate_is_refused(self):
