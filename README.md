@@ -16,6 +16,9 @@ tested. Compatibility with your particular PC is not guaranteed.
 
 ## Download and boot
 
+These steps are for the **Intel/AMD PC image**. Raspberry Pi needs a separate
+ARM64 image. Check the [hardware guide](docs/hardware.md) first.
+
 1. Open [Releases](https://github.com/Emmanuelcsam/vaultboot/releases) and download
    the **`vaultboot-…-amd64.img.gz`** file and `SHA256SUMS`. The source archives are for developers;
    you do not need them to use the system.
@@ -49,13 +52,18 @@ Choose the USB image for everyday use.
 
 ## Hardware
 
-- A **64-bit Intel or AMD PC** with USB boot. Not 32-bit x86, ARM, Raspberry Pi,
-  or Apple Silicon. Some old 64-bit machines have 32-bit UEFI and are unsupported.
+- The current PC image targets **64-bit Intel or AMD PCs** with USB boot.
+  Some old 64-bit machines have 32-bit UEFI and are unsupported.
 - **4 GB RAM recommended** as a project starting point, not an official Obsidian
   minimum. Plugin count, graph size, attachments, and vault size affect memory.
 - An 8 GB or larger USB drive; a USB SSD is preferable for sustained use.
 - Common Intel/AMD graphics and common Wi-Fi firmware are included. Unusual
   hardware may need extra drivers. Ethernet is the simplest setup connection.
+
+A separate **Raspberry Pi 3 ARM64 image is in development and is not released
+yet**; its 1 GB memory makes it an experimental target. The PC image does not
+run on a Pi. See the [compatibility matrix](docs/hardware.md) for architecture,
+memory, and boot limits.
 
 Obsidian still contains Electron. Removing a desktop reduces background work,
 but does not remove Obsidian's own CPU and memory needs. No benchmark against

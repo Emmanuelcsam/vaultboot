@@ -18,7 +18,7 @@ import uuid
 
 
 class VM:
-    def __init__(self, image, work, firmware="bios", offline=False, memory=2048):
+    def __init__(self, image, work, firmware="bios", offline=False, memory=2048, share=None, data_disk=None):
         self.work = Path(work).resolve()
         self.work.mkdir(parents=True, exist_ok=True)
         image = Path(image).resolve()
@@ -31,6 +31,16 @@ class VM:
                 "-drive", f"file={overlay},format=qcow2,if=virtio", "-vga", "std",
                 "-display", "none", "-serial", f"unix:{self.serial_path},server=on,wait=off",
                 "-qmp", f"unix:{self.qmp_path},server=on,wait=off"]
+        if share:
+            directory = Path(share).resolve(strict=True)
+            if not directory.is_dir():
+                raise ValueError("Share must be a directory")
+            args += ["-virtfs", f"local,path={directory},mount_tag=vaultboot,security_model=none"]
+        if data_disk:
+            disk = Path(data_disk)
+            if disk.is_symlink() or not disk.is_file():
+                raise ValueError("Data disk must be a regular file")
+            args += ["-drive", f"file={disk.resolve()},format=raw,if=virtio"]
         args += ["-nic", "none"] if offline else ["-netdev", "user,id=net0", "-device", "virtio-net-pci,netdev=net0,id=nic0"]
         if firmware == "uefi":
             code = next(Path("/usr/share/OVMF").glob("OVMF_CODE_4M.fd"))
@@ -211,6 +221,9 @@ def main():
     parser.add_argument("work")
     parser.add_argument("--firmware", choices=["bios", "uefi"], default="bios")
     parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--memory", type=int, default=2048, choices=range(1024, 8193))
+    parser.add_argument("--share", type=Path)
+    parser.add_argument("--data-disk", type=Path)
     args = parser.parse_args()
     work = Path(args.work).resolve()
     work.mkdir(parents=True, exist_ok=True)
@@ -220,7 +233,7 @@ def main():
     def emit(value):
         with responses.open("a") as stream:
             stream.write(json.dumps(value) + "\n")
-    vm = VM(args.image, work, args.firmware, args.offline)
+    vm = VM(args.image, work, args.firmware, args.offline, args.memory, args.share, args.data_disk)
     try:
         try:
             emit({"event": "login", "result": vm.login(timeout=45)})

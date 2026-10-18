@@ -12,6 +12,7 @@ from logging.handlers import RotatingFileHandler
 import os
 from pathlib import Path
 import platform
+import posixpath
 import re
 import shutil
 import signal
@@ -82,7 +83,12 @@ def select_asset(release: dict, architecture: str = "amd64") -> dict:
         raise SetupError("The official release has an unexpected version. Nothing was installed.")
     for asset in release.get("assets", []):
         name = asset.get("name", "")
-        if not re.fullmatch(r"obsidian_[0-9A-Za-z.+_-]+_" + architecture + r"\.deb", name, flags=re.IGNORECASE):
+        package_format = "deb"
+        if re.fullmatch(r"obsidian_[0-9A-Za-z.+_-]+_" + architecture + r"\.deb", name, flags=re.IGNORECASE):
+            pass
+        elif architecture == "arm64" and re.fullmatch(r"obsidian-[0-9A-Za-z.+_-]+-arm64\.tar\.gz", name, flags=re.IGNORECASE):
+            package_format = "tar"
+        else:
             continue
         digest = asset.get("digest") or ""
         url = asset.get("browser_download_url", "")
@@ -90,8 +96,49 @@ def select_asset(release: dict, architecture: str = "amd64") -> dict:
         expected_url = DOWNLOAD_PREFIX + urllib.parse.quote(version, safe="") + "/" + urllib.parse.quote(name, safe="")
         if url != expected_url or not re.fullmatch(r"sha256:[a-fA-F0-9]{64}", digest) or not isinstance(size, int) or not 1 <= size <= MAX_DOWNLOAD:
             raise SetupError("This release does not provide a supported download with a SHA-256 digest. Nothing was installed.")
-        return {"version": version, "architecture": architecture, "name": name, "url": url, "size": size, "sha256": digest.split(":", 1)[1].lower()}
-    raise SetupError("No " + architecture + " Debian package was found in the official release.")
+        return {"version": version, "architecture": architecture, "format": package_format, "name": name, "url": url, "size": size, "sha256": digest.split(":", 1)[1].lower()}
+    raise SetupError("No supported " + architecture + " Linux package was found in the official release.")
+
+
+def extract_tar(archive: Path, destination: Path):
+    """Extract upstream ARM64 archives without paths or links escaping staging."""
+    if not hasattr(tarfile, "data_filter"):
+        raise SetupError("Safe archive extraction requires a newer Python version. Update the operating system first.")
+    payload = destination.parent / "tar-payload"
+    payload.mkdir()
+    try:
+        with tarfile.open(archive, "r:gz") as source:
+            members = []
+            expanded = 0
+            for member in source:
+                expanded += member.size
+                if len(members) >= 50_000 or expanded > 2 * 1024**3:
+                    raise SetupError("The archive exceeds safe extraction limits.")
+                name = member.name
+                if name.startswith("/") or ".." in name.split("/"):
+                    raise SetupError("The archive contains an unsafe path. Nothing was installed.")
+                if not (member.isfile() or member.isdir() or member.issym() or member.islnk()):
+                    raise SetupError("The archive contains a special file. Nothing was installed.")
+                if member.issym() or member.islnk():
+                    target = member.linkname
+                    resolved = posixpath.normpath(posixpath.join(posixpath.dirname(name) if member.issym() else "", target))
+                    if target.startswith("/") or resolved == ".." or resolved.startswith("../"):
+                        raise SetupError("The archive contains an escaping link. Nothing was installed.")
+                members.append(member)
+            # The data filter additionally resolves existing symlinks on disk for
+            # each member and strips privileged ownership/mode metadata.
+            source.extractall(payload, members=members, filter="data")
+    except (tarfile.TarError, OSError, ValueError) as exc:
+        raise SetupError("The verified archive could not be safely extracted. Your previous version was kept.") from exc
+    candidates = [folder for folder in [payload, *payload.iterdir()]
+                  if folder.is_dir() and not folder.is_symlink()
+                  and (folder / "obsidian").is_file()
+                  and not (folder / "obsidian").is_symlink()]
+    if len(candidates) != 1:
+        raise SetupError("The ARM64 archive layout has changed. Your previous version was kept.")
+    target = destination / "opt/Obsidian"
+    target.parent.mkdir(parents=True)
+    candidates[0].rename(target)
 
 
 class Runtime:
@@ -214,7 +261,7 @@ Vaultboot is an independent Debian-based project, not an official Obsidian produ
             previous = self.current.resolve() if self.current.is_symlink() else None
             with tempfile.TemporaryDirectory(prefix=".install-", dir=self.releases) as scratch:
                 scratch = Path(scratch)
-                archive = scratch / "obsidian.deb"
+                archive = scratch / asset["name"]
                 digest = hashlib.sha256()
                 received = 0
                 with opener(asset["url"]) as response, archive.open("wb") as output:
@@ -227,9 +274,12 @@ Vaultboot is an independent Debian-based project, not an official Obsidian produ
                 if received != asset["size"] or digest.hexdigest() != asset["sha256"]:
                     raise SetupError("The Obsidian download did not match its published SHA-256 checksum. Nothing was installed. Please retry the download.")
                 extracted = scratch / "extracted"
-                result = run(["dpkg-deb", "--extract", str(archive), str(extracted)], capture_output=True, text=True)
-                if result.returncode:
-                    raise SetupError("The verified package could not be extracted. Your previous version was kept.")
+                if asset["format"] == "tar":
+                    extract_tar(archive, extracted)
+                else:
+                    result = run(["dpkg-deb", "--extract", str(archive), str(extracted)], capture_output=True, text=True)
+                    if result.returncode:
+                        raise SetupError("The verified package could not be extracted. Your previous version was kept.")
                 executable = extracted / "opt/Obsidian/obsidian"
                 if not executable.is_file() or not os.access(executable, os.X_OK):
                     raise SetupError("The package layout has changed. Your previous version was kept.")

@@ -148,7 +148,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_arm64_never_silently_installs_amd64_asset(self):
         with patch.object(runtime.platform, "machine", return_value="aarch64"):
-            with self.assertRaisesRegex(runtime.SetupError, "No arm64"):
+            with self.assertRaisesRegex(runtime.SetupError, "No supported arm64"):
                 self.app.install(self.opener)
         self.assertEqual(self.calls, [runtime.RELEASE_API])
 
@@ -156,6 +156,64 @@ class RuntimeTests(unittest.TestCase):
         with patch.object(runtime.platform, "machine", return_value="armv7l"):
             with self.assertRaisesRegex(runtime.SetupError, "64-bit"):
                 runtime.debian_architecture()
+
+    def make_tar(self, extra=None):
+        output = io.BytesIO()
+        with tarfile.open(fileobj=output, mode="w:gz") as archive:
+            executable = tarfile.TarInfo("obsidian-1.14.4-arm64/obsidian")
+            executable.mode = 0o755
+            data = b"fake ARM64 executable"
+            executable.size = len(data)
+            archive.addfile(executable, io.BytesIO(data))
+            if extra is not None:
+                archive.addfile(extra, io.BytesIO(b"x") if extra.isfile() else None)
+        return output.getvalue()
+
+    def test_arm64_tar_installs_transactionally_without_dpkg(self):
+        self.old_install()
+        self.body = self.make_tar()
+        asset = self.release["assets"][0]
+        asset.update(name="obsidian-1.14.4-arm64.tar.gz", size=len(self.body), digest="sha256:" + hashlib.sha256(self.body).hexdigest())
+        asset["browser_download_url"] = runtime.DOWNLOAD_PREFIX + "v1.14.4/" + asset["name"]
+        with patch.object(runtime.platform, "machine", return_value="aarch64"), patch.object(runtime, "run") as commands:
+            installed = self.app.install(self.opener)
+        commands.assert_not_called()
+        self.assertEqual(installed["format"], "tar")
+        self.assertEqual(self.app.executable().read_bytes(), b"fake ARM64 executable")
+
+    def test_tar_rejects_path_traversal_absolute_paths_links_and_special_files(self):
+        cases = [
+            ("../outside", tarfile.REGTYPE, ""),
+            ("/absolute", tarfile.REGTYPE, ""),
+            ("obsidian-1.14.4-arm64/link", tarfile.SYMTYPE, "../../outside"),
+            ("obsidian-1.14.4-arm64/link", tarfile.SYMTYPE, "/outside"),
+            ("obsidian-1.14.4-arm64/link", tarfile.LNKTYPE, "../outside"),
+            ("obsidian-1.14.4-arm64/device", tarfile.CHRTYPE, ""),
+        ]
+        for index, (name, kind, target) in enumerate(cases):
+            with self.subTest(name=name, kind=kind):
+                member = tarfile.TarInfo(name)
+                member.type = kind
+                member.linkname = target
+                member.size = 1 if kind == tarfile.REGTYPE else 0
+                staging = self.home / ("case" + str(index))
+                staging.mkdir()
+                archive = staging / "app.tar.gz"
+                archive.write_bytes(self.make_tar(member))
+                with self.assertRaises(runtime.SetupError):
+                    runtime.extract_tar(archive, staging / "extracted")
+                self.assertFalse((self.home / "outside").exists())
+
+    def test_tar_preserves_safe_internal_symlinks(self):
+        member = tarfile.TarInfo("obsidian-1.14.4-arm64/application-link")
+        member.type = tarfile.SYMTYPE
+        member.linkname = "obsidian"
+        archive = self.home / "app.tar.gz"
+        archive.write_bytes(self.make_tar(member))
+        runtime.extract_tar(archive, self.home / "extracted")
+        linked = self.home / "extracted/opt/Obsidian/application-link"
+        self.assertTrue(linked.is_symlink())
+        self.assertEqual(linked.read_bytes(), b"fake ARM64 executable")
 
     def test_unexpected_asset_origin_is_rejected(self):
         self.release["assets"][0]["browser_download_url"] = "https://example.org/package.deb"
