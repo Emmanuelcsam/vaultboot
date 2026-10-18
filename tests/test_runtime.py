@@ -135,6 +135,28 @@ class RuntimeTests(unittest.TestCase):
             self.app.install(self.opener)
         self.assertEqual(self.calls, [runtime.RELEASE_API])
 
+    def test_arm64_selects_its_own_official_package_and_checks_digest(self):
+        asset = dict(self.release["assets"][0])
+        asset["name"] = "obsidian_1.14.4_arm64.deb"
+        asset["browser_download_url"] = runtime.DOWNLOAD_PREFIX + "v1.14.4/" + asset["name"]
+        self.release["assets"].append(asset)
+        with patch.object(runtime.platform, "machine", return_value="aarch64"), patch.object(runtime, "run", side_effect=self.extract):
+            installed = self.app.install(self.opener)
+        self.assertEqual(installed["architecture"], "arm64")
+        self.assertEqual(self.calls[-1], asset["browser_download_url"])
+        self.assertEqual(installed["sha256"], self.digest)
+
+    def test_arm64_never_silently_installs_amd64_asset(self):
+        with patch.object(runtime.platform, "machine", return_value="aarch64"):
+            with self.assertRaisesRegex(runtime.SetupError, "No arm64"):
+                self.app.install(self.opener)
+        self.assertEqual(self.calls, [runtime.RELEASE_API])
+
+    def test_32_bit_arm_requires_a_64_bit_operating_system(self):
+        with patch.object(runtime.platform, "machine", return_value="armv7l"):
+            with self.assertRaisesRegex(runtime.SetupError, "64-bit"):
+                runtime.debian_architecture()
+
     def test_unexpected_asset_origin_is_rejected(self):
         self.release["assets"][0]["browser_download_url"] = "https://example.org/package.deb"
         with self.assertRaises(runtime.SetupError):

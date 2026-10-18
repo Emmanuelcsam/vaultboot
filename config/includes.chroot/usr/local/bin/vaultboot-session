@@ -3,6 +3,8 @@
 export XDG_CURRENT_DESKTOP=Vaultboot
 export XDG_SESSION_DESKTOP=vaultboot
 export DESKTOP_SESSION=vaultboot
+# Tiny setup/system dialogs should not initialize a GPU renderer on old hardware.
+export GSK_RENDERER="${GSK_RENDERER:-cairo}"
 xsetroot -solid '#181820'
 openbox --config-file /etc/xdg/openbox/vaultboot-rc.xml &
 window_manager=$!

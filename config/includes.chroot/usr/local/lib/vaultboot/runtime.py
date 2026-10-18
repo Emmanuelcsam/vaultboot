@@ -11,6 +11,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 import os
 from pathlib import Path
+import platform
 import re
 import shutil
 import signal
@@ -64,13 +65,24 @@ def network_open(url: str):
     return urllib.request.build_opener(SafeRedirect()).open(request, timeout=45)
 
 
-def select_asset(release: dict) -> dict:
+def debian_architecture() -> str:
+    machine = platform.machine().lower()
+    if machine in {"x86_64", "amd64"}:
+        return "amd64"
+    if machine in {"aarch64", "arm64"}:
+        return "arm64"
+    raise SetupError("Obsidian requires a supported 64-bit Intel/AMD or ARM Linux system. This operating system architecture is unsupported.")
+
+
+def select_asset(release: dict, architecture: str = "amd64") -> dict:
+    if architecture not in {"amd64", "arm64"}:
+        raise SetupError("This operating system architecture is unsupported.")
     version = release.get("tag_name", "")
     if not re.fullmatch(r"v?[0-9]+(?:\.[0-9]+){1,3}(?:[-._][A-Za-z0-9]+)*", version):
         raise SetupError("The official release has an unexpected version. Nothing was installed.")
     for asset in release.get("assets", []):
         name = asset.get("name", "")
-        if not re.fullmatch(r"obsidian_[0-9A-Za-z.+_-]+_amd64\.deb", name, flags=re.IGNORECASE):
+        if not re.fullmatch(r"obsidian_[0-9A-Za-z.+_-]+_" + architecture + r"\.deb", name, flags=re.IGNORECASE):
             continue
         digest = asset.get("digest") or ""
         url = asset.get("browser_download_url", "")
@@ -78,8 +90,8 @@ def select_asset(release: dict) -> dict:
         expected_url = DOWNLOAD_PREFIX + urllib.parse.quote(version, safe="") + "/" + urllib.parse.quote(name, safe="")
         if url != expected_url or not re.fullmatch(r"sha256:[a-fA-F0-9]{64}", digest) or not isinstance(size, int) or not 1 <= size <= MAX_DOWNLOAD:
             raise SetupError("This release does not provide a supported download with a SHA-256 digest. Nothing was installed.")
-        return {"version": version, "name": name, "url": url, "size": size, "sha256": digest.split(":", 1)[1].lower()}
-    raise SetupError("No 64-bit Intel/AMD Debian package was found in the official release.")
+        return {"version": version, "architecture": architecture, "name": name, "url": url, "size": size, "sha256": digest.split(":", 1)[1].lower()}
+    raise SetupError("No " + architecture + " Debian package was found in the official release.")
 
 
 class Runtime:
@@ -187,7 +199,7 @@ Vaultboot is an independent Debian-based project, not an official Obsidian produ
                 metadata = response.read(2_000_001)
             if len(metadata) > 2_000_000:
                 raise SetupError("The release response is unexpectedly large.")
-            asset = select_asset(json.loads(metadata))
+            asset = select_asset(json.loads(metadata), debian_architecture())
             existing = self.current / "release.json"
             if self.executable() and existing.is_file():
                 try:
