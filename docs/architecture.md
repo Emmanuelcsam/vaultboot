@@ -7,7 +7,7 @@ PC BIOS / UEFI
     -> LightDM automatic local sign-in (writer)
     -> Xorg + Openbox (no desktop panel or application suite)
     -> Vaultboot session supervisor
-    -> Obsidian, with a normal user account and Electron sandbox
+    -> Obsidian, running as the normal local user
 ```
 
 The first session installs Obsidian into the user's data directory from its

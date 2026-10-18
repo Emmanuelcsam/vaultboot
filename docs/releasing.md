@@ -8,7 +8,7 @@
    the binaries and full corresponding Debian sources.
 3. Boot the exact candidate image in both BIOS and UEFI virtual machines.
    Verify automatic login, first-run network setup, upstream installation,
-   sandboxed Obsidian launch, system menu, and clean shutdown.
+   Obsidian launch as the normal local user, system menu, and clean shutdown.
 4. In a writable USB-image VM, create a note, reboot, and verify it survives
    alongside the installed app. Boot with networking disabled and verify the
    cached app opens. Confirm the ISO warns about volatile storage.

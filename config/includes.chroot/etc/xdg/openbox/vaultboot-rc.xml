@@ -30,6 +30,7 @@
   <applications>
     <application class="obsidian" type="normal"><decor>no</decor><maximized>yes</maximized><focus>yes</focus></application>
     <application class="Obsidian" type="normal"><decor>no</decor><maximized>yes</maximized><focus>yes</focus></application>
+    <application class="md.obsidian.Obsidian" type="normal"><decor>no</decor><maximized>yes</maximized><focus>yes</focus></application>
     <application class="Zenity"><decor>yes</decor><focus>yes</focus><layer>above</layer></application>
   </applications>
 </openbox_config>
