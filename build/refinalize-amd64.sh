@@ -40,11 +40,18 @@ mksquashfs /work/vaultboot-final-root /work/vaultboot-final.squashfs \
     -noappend -no-progress -comp xz -b 1M -processors 2 -mem 1G
 mv /work/vaultboot-final.squashfs binary/live/filesystem.squashfs
 lb binary_checksums --force
+# Trixie defaults to SHA256; preserve whichever checksum algorithms this build used.
+checksum_maps=()
+for checksum in binary/*sum.txt; do
+    [[ -f $checksum ]] || continue
+    checksum_maps+=(-map "/work/$checksum" "/${checksum##*/}")
+done
+(( ${#checksum_maps[@]} > 0 ))
 # Replay the existing BIOS/EFI entries; only the rootfs and its checksum file change.
 xorriso -indev "/previous/$prefix.iso" -outdev "/out/$prefix.iso" \
     -boot_image any replay \
     -map /work/binary/live/filesystem.squashfs /live/filesystem.squashfs \
-    -map /work/binary/md5sum.txt /md5sum.txt -commit -end
+    "${checksum_maps[@]}" -commit -end
 python3 /src/scripts/make-usb-image.py --iso "/out/$prefix.iso" \
     --output "/out/$prefix.img" --persistence-mib 4096
 gzip -n -1 "/out/$prefix.img"

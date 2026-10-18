@@ -18,6 +18,8 @@ import uuid
 
 
 class VM:
+    login_password = "live"
+
     def __init__(self, image, work, firmware="bios", offline=False, memory=2048, share=None, data_disk=None):
         self.work = Path(work).resolve()
         self.work.mkdir(parents=True, exist_ok=True)
@@ -49,6 +51,9 @@ class VM:
                 shutil.copy2(code.with_name("OVMF_VARS_4M.fd"), variables)
             args += ["-drive", f"if=pflash,format=raw,readonly=on,file={code}",
                      "-drive", f"if=pflash,format=raw,file={variables}"]
+        self.start_process(args)
+
+    def start_process(self, args):
         self.process = subprocess.Popen(args, stdout=(self.work / "qemu.log").open("ab"), stderr=subprocess.STDOUT)
         self.serial = self.connect(self.serial_path)
         self.qmp_socket = self.connect(self.qmp_path)
@@ -148,10 +153,10 @@ class VM:
             self.serial.sendall(b"writer\n")
             _, marker = self.read_until_any([b"Password:", b"writer@vaultboot:"], 20)
             if marker == b"Password:":
-                self.serial.sendall(b"live\n")
+                self.serial.sendall((self.login_password + "\n").encode())
                 _, marker = self.read_until_any([b"writer@vaultboot:", b"Login incorrect"], 30)
                 if marker == b"Login incorrect":
-                    raise RuntimeError("Guest rejected writer/live; check user-setup in the image")
+                    raise RuntimeError(f"Guest rejected writer/{self.login_password}; check user-setup in the image")
         self.read_until(b"$ ", 30)
         self.serial.sendall(b"stty -echo\n")
         return self.shell("id && uname -a && systemctl is-active lightdm && pgrep -a openbox")
@@ -227,16 +232,22 @@ def main():
     args = parser.parse_args()
     work = Path(args.work).resolve()
     work.mkdir(parents=True, exist_ok=True)
+    vm = VM(args.image, work, args.firmware, args.offline, args.memory, args.share, args.data_disk)
+    run_console(vm, work)
+
+
+def run_console(vm, work, login_timeout=45, duration=1800):
+    """Serve the same bounded JSONL command protocol for either architecture."""
+    work = Path(work).resolve()
     queue = work / "commands.jsonl"
     queue.touch(exist_ok=True)
     responses = work / "responses.jsonl"
     def emit(value):
         with responses.open("a") as stream:
             stream.write(json.dumps(value) + "\n")
-    vm = VM(args.image, work, args.firmware, args.offline, args.memory, args.share, args.data_disk)
     try:
         try:
-            emit({"event": "login", "result": vm.login(timeout=45)})
+            emit({"event": "login", "result": vm.login(timeout=login_timeout)})
         except Exception as error:
             failure = {"event": "login", "error": str(error)}
             try:
@@ -244,7 +255,7 @@ def main():
             except Exception as screenshot_error:
                 failure["screenshot_error"] = str(screenshot_error)
             emit(failure)
-        deadline = time.monotonic() + 1800
+        deadline = time.monotonic() + duration
         with queue.open() as stream:
             while time.monotonic() < deadline and vm.process.poll() is None:
                 position = stream.tell()
