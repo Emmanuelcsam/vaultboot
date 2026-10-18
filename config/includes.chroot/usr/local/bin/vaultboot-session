@@ -1,14 +1,11 @@
 #!/bin/sh
-# Keep window management alive even when setup needs attention.
+# Openbox owns the session and remains available when setup needs attention.
 export XDG_CURRENT_DESKTOP=Vaultboot
 export XDG_SESSION_DESKTOP=vaultboot
 export DESKTOP_SESSION=vaultboot
 # Tiny setup/system dialogs should not initialize a GPU renderer on old hardware.
 export GSK_RENDERER="${GSK_RENDERER:-cairo}"
 xsetroot -solid '#181820'
-openbox --config-file /etc/xdg/openbox/vaultboot-rc.xml &
-window_manager=$!
-trap 'kill "$window_manager" 2>/dev/null || true' EXIT HUP INT TERM
-vaultboot session
-# A recoverable supervisor error still leaves system-menu / terminal keys usable.
-wait "$window_manager"
+# Its startup command runs only after window-manager initialization completes.
+# Starting both concurrently can leave the first application waiting for X events.
+exec openbox --config-file /etc/xdg/openbox/vaultboot-rc.xml --startup 'vaultboot session'
