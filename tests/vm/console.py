@@ -14,6 +14,7 @@ import shutil
 import socket
 import subprocess
 import time
+import uuid
 
 
 class VM:
@@ -29,8 +30,8 @@ class VM:
         args = ["qemu-system-x86_64", "-enable-kvm", "-cpu", "host", "-smp", "2", "-m", str(memory),
                 "-drive", f"file={overlay},format=qcow2,if=virtio", "-vga", "std",
                 "-display", "none", "-serial", f"unix:{self.serial_path},server=on,wait=off",
-                "-qmp", f"unix:{self.qmp_path},server=on,wait=off", "-no-reboot"]
-        args += ["-nic", "none" if offline else "user,model=virtio-net-pci"]
+                "-qmp", f"unix:{self.qmp_path},server=on,wait=off"]
+        args += ["-nic", "none"] if offline else ["-netdev", "user,id=net0", "-device", "virtio-net-pci,netdev=net0,id=nic0"]
         if firmware == "uefi":
             code = next(Path("/usr/share/OVMF").glob("OVMF_CODE_4M.fd"))
             variables = self.work / "OVMF_VARS.fd"
@@ -41,8 +42,12 @@ class VM:
         self.process = subprocess.Popen(args, stdout=(self.work / "qemu.log").open("ab"), stderr=subprocess.STDOUT)
         self.serial = self.connect(self.serial_path)
         self.qmp_socket = self.connect(self.qmp_path)
+        self.qmp_socket.settimeout(15)
         self.qmp_stream = self.qmp_socket.makefile("rwb", buffering=0)
-        self.qmp_stream.readline()
+        self.events = []
+        self.qmp_id = 0
+        if "QMP" not in self.qmp_read():
+            raise RuntimeError("QEMU did not send a QMP greeting")
         self.qmp("qmp_capabilities")
         self.log = (self.work / "serial.log").open("ab", buffering=0)
         self.buffer = b""
@@ -59,20 +64,59 @@ class VM:
                 time.sleep(0.1)
         raise TimeoutError(f"QEMU socket did not appear: {path}")
 
+    def qmp_read(self):
+        line = self.qmp_stream.readline()
+        if not line:
+            raise EOFError("QEMU monitor closed")
+        return json.loads(line)
+
     def qmp(self, command, arguments=None):
-        self.qmp_stream.write(json.dumps({"execute": command, "arguments": arguments or {}}).encode() + b"\n")
+        self.qmp_id += 1
+        request_id = self.qmp_id
+        self.qmp_stream.write(json.dumps({"execute": command, "arguments": arguments or {}, "id": request_id}).encode() + b"\n")
+        deadline = time.monotonic() + 15
         while True:
-            result = json.loads(self.qmp_stream.readline())
+            if time.monotonic() >= deadline:
+                raise TimeoutError("QEMU monitor timed out: " + command)
+            self.qmp_socket.settimeout(max(0.1, deadline - time.monotonic()))
+            result = self.qmp_read()
+            if "event" in result:
+                self.events.append(result)
+                continue
+            if result.get("id") != request_id:
+                continue
             if "error" in result:
                 raise RuntimeError(result)
             if "return" in result:
+                self.qmp_socket.settimeout(15)
                 return result["return"]
 
-    def read_until(self, marker, timeout=180):
+    def wait_event(self, event, timeout=180):
         deadline = time.monotonic() + timeout
-        while marker not in self.buffer:
+        while time.monotonic() < deadline:
+            for index, value in enumerate(self.events):
+                if value.get("event") == event:
+                    return self.events.pop(index)
+            self.qmp_socket.settimeout(max(0.1, deadline - time.monotonic()))
+            try:
+                value = self.qmp_read()
+            finally:
+                self.qmp_socket.settimeout(15)
+            if "event" in value:
+                self.events.append(value)
+        raise TimeoutError("QEMU did not emit " + event)
+
+    def read_until_any(self, markers, timeout=180):
+        deadline = time.monotonic() + timeout
+        while True:
+            found = [(self.buffer.index(marker), marker) for marker in markers if marker in self.buffer]
+            if found:
+                offset, marker = min(found)
+                end = offset + len(marker)
+                result, self.buffer = self.buffer[:end], self.buffer[end:]
+                return result.decode("utf-8", "replace"), marker
             if time.monotonic() >= deadline:
-                raise TimeoutError(f"Guest did not emit {marker!r}; tail: {self.buffer[-2000:]!r}")
+                raise TimeoutError(f"Guest did not emit {markers!r}; tail: {self.buffer[-2000:]!r}")
             if not select.select([self.serial], [], [], 1)[0]:
                 continue
             chunk = self.serial.recv(65536)
@@ -80,37 +124,85 @@ class VM:
                 raise EOFError("Guest serial console closed")
             self.log.write(chunk)
             self.buffer += chunk
-        end = self.buffer.index(marker) + len(marker)
-        result, self.buffer = self.buffer[:end], self.buffer[end:]
-        return result.decode("utf-8", "replace")
+            if len(self.buffer) > 4_000_000:
+                raise RuntimeError("Serial output exceeded 4 MB without the expected marker; see serial.log")
+
+    def read_until(self, marker, timeout=180):
+        return self.read_until_any([marker], timeout)[0]
 
     def login(self):
-        self.read_until(b"login:", 300)
-        self.serial.sendall(b"writer\n")
-        self.read_until(b"Password:", 20)
-        self.serial.sendall(b"live\n")
-        self.read_until(b"$", 30)
+        # Debian live-config only autologins tty1..6. ttyS0 normally asks for
+        # writer/live, but accept an existing shell for manual recovery too.
+        _, marker = self.read_until_any([b"login:", b"writer@vaultboot:"], 300)
+        if marker == b"login:":
+            self.serial.sendall(b"writer\n")
+            _, marker = self.read_until_any([b"Password:", b"writer@vaultboot:"], 20)
+            if marker == b"Password:":
+                self.serial.sendall(b"live\n")
+                _, marker = self.read_until_any([b"writer@vaultboot:", b"Login incorrect"], 30)
+                if marker == b"Login incorrect":
+                    raise RuntimeError("Guest rejected writer/live; check user-setup in the image")
+        self.read_until(b"$ ", 30)
         self.serial.sendall(b"stty -echo\n")
-        time.sleep(0.2)
-        return self.shell("id; uname -a; systemctl is-active lightdm; pgrep -a openbox")
+        return self.shell("id && uname -a && systemctl is-active lightdm && pgrep -a openbox")
 
     def shell(self, command, timeout=180):
         encoded = base64.b64encode(command.encode()).decode()
-        marker = "VAULTBOOT_COMMAND_COMPLETE"
+        marker = "VAULTBOOT_COMPLETE_" + uuid.uuid4().hex
         self.buffer = b""
-        line = f"printf %s {encoded} | base64 -d | bash; result=$?; printf '\\n{marker}:%s\\n' \"$result\"\n"
-        self.serial.sendall(line.encode())
+        payload = f"printf %s {encoded} | base64 -d | bash; result=$?; printf '\\n{marker}:%s\\n' \"$result\"\n"
+        # Encode the wrapper too: an echoed input line must never contain the
+        # completion marker. Chunk lines below the canonical tty input limit.
+        payload = base64.b64encode(payload.encode()).decode()
+        variable = "_vaultboot_" + uuid.uuid4().hex
+        self.serial.sendall((variable + "=''\n").encode())
+        for start in range(0, len(payload), 2000):
+            self.serial.sendall(f'{variable}="${{{variable}}}{payload[start:start + 2000]}"\n'.encode())
+        self.serial.sendall(f'printf %s "${{{variable}}}" | base64 -d | bash; unset {variable}\n'.encode())
         result = self.read_until((marker + ":").encode(), timeout)
         code = self.read_until(b"\n", 5).strip()
         return {"output": result.rsplit(marker, 1)[0], "exit_code": int(code)}
+
+    def reboot(self, timeout=300):
+        previous = self.shell("cat /proc/sys/kernel/random/boot_id")
+        if previous["exit_code"]:
+            raise RuntimeError("Could not read boot ID before reboot")
+        self.qmp("query-status")
+        self.events.clear()
+        result = self.shell("sudo -n sh -c 'sync; (sleep 1; systemctl reboot) >/dev/null 2>&1 </dev/null &'", 30)
+        if result["exit_code"]:
+            raise RuntimeError("Guest reboot command failed: " + str(result))
+        self.wait_event("RESET", timeout)
+        self.buffer = b""
+        while select.select([self.serial], [], [], 0)[0]:
+            chunk = self.serial.recv(65536)
+            if not chunk:
+                raise EOFError("Serial console closed during reboot")
+            self.log.write(chunk)
+        login = self.login()
+        current = self.shell("cat /proc/sys/kernel/random/boot_id")
+        # Output can include a shell prompt, so compare the actual UUID strings.
+        before = previous["output"].strip().splitlines()[-1]
+        after = current["output"].strip().splitlines()[-1]
+        if current["exit_code"] or before == after:
+            raise RuntimeError("Guest did not acquire a new boot ID")
+        return {"previous_boot_id": before, "boot_id": after, "login": login}
 
     def close(self):
         if self.process.poll() is None:
             try:
                 self.qmp("quit")
-            except (OSError, ValueError, EOFError):
+            except (OSError, ValueError, EOFError, RuntimeError):
                 self.process.terminate()
-            self.process.wait(timeout=20)
+            try:
+                self.process.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=5)
+        self.qmp_stream.close()
+        self.qmp_socket.close()
+        self.serial.close()
+        self.log.close()
 
 
 def main():
@@ -133,17 +225,27 @@ def main():
         try:
             emit({"event": "login", "result": vm.login()})
         except Exception as error:
-            vm.qmp("screendump", {"filename": str(work / "login-failure.ppm")})
-            emit({"event": "login", "error": str(error)})
+            failure = {"event": "login", "error": str(error)}
+            try:
+                vm.qmp("screendump", {"filename": str(work / "login-failure.ppm")})
+            except Exception as screenshot_error:
+                failure["screenshot_error"] = str(screenshot_error)
+            emit(failure)
         deadline = time.monotonic() + 1800
         with queue.open() as stream:
             while time.monotonic() < deadline and vm.process.poll() is None:
+                position = stream.tell()
                 line = stream.readline()
-                if not line:
+                if not line.endswith("\n"):
+                    stream.seek(position)
                     time.sleep(0.25)
                     continue
+                command = {}
                 try:
                     command = json.loads(line)
+                    if not isinstance(command, dict):
+                        command = {}
+                        raise ValueError("A command must be a JSON object")
                     kind = command["action"]
                     if kind == "shell":
                         result = vm.shell(command["command"], command.get("timeout", 180))
@@ -151,6 +253,12 @@ def main():
                         result = vm.qmp("screendump", {"filename": str(work / (command["name"] + ".ppm"))})
                     elif kind == "key":
                         result = vm.qmp("human-monitor-command", {"command-line": "sendkey " + command["key"]})
+                    elif kind == "login":
+                        result = vm.login()
+                    elif kind == "reboot":
+                        result = vm.reboot(command.get("timeout", 300))
+                    elif kind == "network":
+                        result = vm.qmp("set_link", {"name": "nic0", "up": bool(command["up"])})
                     elif kind == "serial":
                         vm.serial.sendall(command["text"].encode())
                         result = "sent"
