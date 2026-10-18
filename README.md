@@ -17,7 +17,7 @@ tested. Compatibility with your particular PC is not guaranteed.
 ## Download and boot
 
 1. Open [Releases](https://github.com/Emmanuelcsam/vaultboot/releases) and download
-   the **`usb.img.gz`** file and `SHA256SUMS`. The source archives are for developers;
+   the **`vaultboot-…-amd64.img.gz`** file and `SHA256SUMS`. The source archives are for developers;
    you do not need them to use the system.
 2. Verify the download against `SHA256SUMS`, then extract the `.gz` file to get
    the `.img`. Allow at least 8 GiB free space for extraction.
