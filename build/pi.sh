@@ -7,6 +7,13 @@ umask 022
 [[ $(id -u) == 0 ]] || { echo 'Run as root inside the isolated builder VM.' >&2; exit 1; }
 systemd-detect-virt --vm --quiet || { echo 'A disposable builder VM is required.' >&2; exit 1; }
 [[ -d /build ]] || { echo 'Mount the disposable work disk at /build first.' >&2; exit 1; }
+# Service mount namespaces must never inherit the chroot mounts and keep the
+# filesystem active after this process unmounts it.
+if [[ ${VAULTBOOT_MOUNT_NAMESPACE:-} != "$(readlink /proc/self/ns/mnt)" ]]; then
+    exec unshare --mount --propagation private -- bash -c \
+        'export VAULTBOOT_MOUNT_NAMESPACE=$(readlink /proc/self/ns/mnt); exec "$@"' \
+        vaultboot-private-mounts "$0" "$@"
+fi
 ulimit -n 65536
 project=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 base=$1
@@ -164,7 +171,16 @@ ln -s /run/NetworkManager/resolv.conf "$root/etc/resolv.conf"
 sync
 for target in run sys proc dev boot/firmware; do umount -R "$root/$target"; done
 umount "$root"
-e2fsck -fn "$root_device"
+if ! LC_ALL=C e2fsck -fn "$root_device" > "$work/fsck-final.txt" 2>&1; then
+    cat "$work/fsck-final.txt" >&2
+    exit 1
+fi
+cat "$work/fsck-final.txt"
+# e2fsck can return zero when -n skips recovery of a mounted/dirty journal.
+if grep -Eq 'Warning|Fix\?|Clear\?' "$work/fsck-final.txt"; then
+    echo 'The image filesystem must be clean and fully unmounted before packaging.' >&2
+    exit 1
+fi
 losetup -d "$loop"
 loop=
 python3 "$project/build/pi-layout.py" "$image" > "$output/$prefix.layout.json"
