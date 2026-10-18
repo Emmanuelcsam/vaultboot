@@ -224,7 +224,7 @@ class RootSetupTests(unittest.TestCase):
             (root / "boot/efi/EFI/BOOT/BOOTX64.EFI").touch()
             with mock.patch.object(installer, "run", return_value="") as commands:
                 guard = mock.Mock()
-                installer.chroot_setup(root, node("8:16", "sdb"), guard)
+                installer.chroot_setup(root, node("8:16", "sdb"), guard, "foo", "/dev/sdb3")
             calls = [call.args[2:] for call in commands.call_args_list]
             purge = next(call for call in calls if call[0] == "apt-get")
             self.assertIn("--no-download", purge)
@@ -238,6 +238,35 @@ class RootSetupTests(unittest.TestCase):
             self.assertIn(("update-grub",), calls)
             self.assertFalse((root / "usr/sbin/policy-rc.d").exists())
             self.assertEqual(guard.check.call_count, 2)
+
+    def test_grub_root_remains_stable_when_install_disk_name_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "boot/grub").mkdir(parents=True)
+            cfg = root / "boot/grub/grub.cfg"
+            cfg.write_text("menuentry 'Vaultboot' {\n linux /vmlinuz root=/dev/vdb3 ro quiet\n}\n"
+                           " linux /vmlinuz root=UUID=1234-5678 ro single\n")
+            installer.finalize_grub_root(root, "1234-5678", "/dev/vdb3")
+            self.assertNotIn("/dev/vdb3", cfg.read_text())
+            self.assertEqual(cfg.read_text().count("root=UUID=1234-5678"), 2)
+
+    def test_grub_unknown_duplicate_missing_or_live_roots_fail_closed(self):
+        bad = ["root=/dev/sda1", "root=/dev/vdb3 root=UUID=1234-5678", "quiet",
+               "root=/dev/vdb3 boot=live", "root=UUID=1234-5678 persistence"]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "boot/grub").mkdir(parents=True)
+            cfg = root / "boot/grub/grub.cfg"
+            for args in bad:
+                with self.subTest(args=args):
+                    original = " linux /vmlinuz " + args + "\n"
+                    cfg.write_text(original)
+                    with self.assertRaises(installer.InstallError):
+                        installer.finalize_grub_root(root, "1234-5678", "/dev/vdb3")
+                    self.assertEqual(cfg.read_text(), original)
+            cfg.write_text("# no kernel entries\n")
+            with self.assertRaises(installer.InstallError):
+                installer.finalize_grub_root(root, "1234-5678", "/dev/vdb3")
 
     def test_source_hash_checks_entire_file_and_rejects_corruption_before_install(self):
         with tempfile.TemporaryDirectory() as directory:

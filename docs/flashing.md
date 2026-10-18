@@ -24,6 +24,9 @@ card for a Raspberry Pi 3B/3B+**. A USB card reader is the simplest way to flash
 the Pi card. The image target describes the computer you will boot; it does
 not need to match the computer running the flasher.
 
+Boot with only one Vaultboot USB connected. Copies share the default persistence
+label; connect other Vaultboot or backup drives after the system has started.
+
 ## Supported flashing computers
 
 - **Native Linux:** Python 3.9 or newer, Linux 5.15 or newer, `lsblk`, `udevadm`,

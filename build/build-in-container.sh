@@ -26,7 +26,7 @@ lb config --mode debian --distribution trixie --architectures amd64 \
     --bootloaders 'syslinux grub-efi' --uefi-secure-boot disable \
     --debian-installer none --firmware-binary false --firmware-chroot false \
     --memtest none --linux-flavours amd64 \
-    --bootappend-live 'boot=live components username=writer hostname=vaultboot persistence persistence-label=vaultboot-data locales=en_US.UTF-8 quiet console=tty0 console=ttyS0,115200' \
+    --bootappend-live 'boot=live components username=writer hostname=vaultboot persistence persistence-label=vaultboot-data locales=en_US.UTF-8 noeject quiet console=tty0 console=ttyS0,115200' \
     --iso-application 'Vaultboot Debian Obsidian appliance' \
     --iso-publisher 'Vaultboot community project' --iso-volume VAULTBOOT \
     --chroot-squashfs-compression-type xz \

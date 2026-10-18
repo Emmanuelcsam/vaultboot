@@ -482,7 +482,33 @@ def configure_root(root, root_uuid, esp_uuid):
         shutil.rmtree(home)
 
 
-def chroot_setup(root, selected, guard):
+def finalize_grub_root(root, root_uuid, root_device):
+    """Use stable root UUIDs even while the safety lock defers udev symlinks.
+
+    GRUB's 10_linux falls back to the installation-time /dev name if udev has
+    not created /dev/disk/by-uuid yet. Only rewrite the exact root we mounted;
+    refuse missing, duplicate or unexpected root arguments instead of guessing.
+    Later kernel updates run on the installed system with ordinary udev links.
+    """
+    path = root / "boot/grub/grub.cfg"
+    lines = path.read_text().splitlines(keepends=True)
+    count = 0
+    stable = "root=UUID=" + root_uuid
+    for index, line in enumerate(lines):
+        if not re.match(r"\s*linux\s", line):
+            continue
+        count += 1
+        roots = re.findall(r"(?<!\S)root=\S+", line)
+        if (len(roots) != 1 or roots[0] not in {"root=" + root_device, stable}
+                or "boot=live" in line or "persistence" in line):
+            raise InstallError("Installed GRUB configuration has an unexpected root boot argument.")
+        lines[index] = re.sub(r"(?<!\S)root=\S+", stable, line)
+    if not count:
+        raise InstallError("Installed GRUB configuration has no ordinary-root boot entry.")
+    path.write_text("".join(lines))
+
+
+def chroot_setup(root, selected, guard, root_uuid, root_device):
     def inside(*args, **kwargs):
         return run("chroot", str(root), *args, **kwargs)
 
@@ -525,10 +551,7 @@ def chroot_setup(root, selected, guard):
         inside("grub-install", "--target=x86_64-efi", "--efi-directory=/boot/efi",
                "--bootloader-id=Vaultboot", "--removable", "--no-nvram", "--no-uefi-secure-boot", "--recheck")
         inside("update-grub")
-        grub = (root / "boot/grub/grub.cfg").read_text()
-        kernel_lines = [line for line in grub.splitlines() if re.match(r"\s*linux\s", line)]
-        if not kernel_lines or any("boot=live" in line or "persistence" in line for line in kernel_lines):
-            raise InstallError("Installed GRUB configuration has no valid ordinary-root boot entry.")
+        finalize_grub_root(root, root_uuid, root_device)
         if not (root / "boot/efi/EFI/BOOT/BOOTX64.EFI").is_file():
             raise InstallError("The UEFI fallback loader was not created.")
     finally:
@@ -596,7 +619,7 @@ def install(selected, source=SOURCE, verified_source=None):
         mounts.append(root / "run")
         print("\nConfiguring the fresh user and installing both BIOS and UEFI boot files…", flush=True)
         guard.check()
-        chroot_setup(root, selected, guard)
+        chroot_setup(root, selected, guard, root_uuid, partitions[3])
         run("sync")
         completed = True
     finally:
