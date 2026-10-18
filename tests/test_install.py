@@ -1,13 +1,16 @@
 """Installer safety checks; no test opens, formats or mounts a real disk."""
 
 import importlib.util
+from contextlib import ExitStack, contextmanager
 import io
 import hashlib
 import json
 import os
 from pathlib import Path
 import stat
+import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -16,7 +19,11 @@ SPEC = importlib.util.spec_from_file_location(
     "vaultboot_install", Path(__file__).resolve().parents[1]
     / "config/includes.chroot/usr/local/lib/vaultboot/install.py")
 installer = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(installer)
+sys.path.insert(0, str(Path(SPEC.origin).parent))
+try:
+    SPEC.loader.exec_module(installer)
+finally:
+    sys.path.pop(0)
 
 
 def node(key, name, kind="disk", parents=(), **kwargs):
@@ -305,6 +312,205 @@ class RootSetupTests(unittest.TestCase):
                 with installer.TargetGuard(selected):
                     self.fail("busy disk entered guarded write section")
             close.assert_called_once_with(100)
+
+
+class OfflinePreloadTests(unittest.TestCase):
+    def test_real_cache_corruption_is_detected_before_disks_are_offered(self):
+        payload = b"pinned package test bytes"
+        asset = {"version": "v1.14.4", "architecture": "amd64", "format": "deb",
+                 "name": "obsidian_1.14.4_amd64.deb", "size": len(payload),
+                 "url": "https://github.com/obsidianmd/obsidian-releases/releases/download/v1.14.4/obsidian_1.14.4_amd64.deb",
+                 "sha256": hashlib.sha256(payload).hexdigest()}
+        receipt = {"schema": 1, "asset": asset, "terms_accepted": True}
+        real_open_cache = installer.open_cache
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            cache = directory / "cache"
+            cache.mkdir()
+            cache.chmod(0o755)
+            manifest = directory / "pins.json"
+            manifest.write_text(json.dumps({"schema": 1, "assets": {"amd64": asset}}))
+            (cache / "ready.json").write_text(json.dumps(receipt))
+            (cache / "ready.json").chmod(0o644)
+            # Same length, different bytes: checking only size cannot pass.
+            (cache / asset["name"]).write_bytes(b"!" + payload[1:])
+            (cache / asset["name"]).chmod(0o644)
+            with mock.patch.dict(real_open_cache.__wrapped__.__globals__, TRUSTED_UID=os.getuid()), \
+                 mock.patch.object(installer, "preflight"), \
+                 mock.patch.object(installer, "verify_source", return_value=(1, 2, 3, 4)), \
+                 mock.patch.object(installer, "open", mock.mock_open(), create=True), \
+                 mock.patch.object(installer.fcntl, "flock"), \
+                 mock.patch.object(installer, "open_cache", side_effect=lambda arch: real_open_cache(arch, manifest, cache)), \
+                 mock.patch.object(installer, "inspect_disks") as disks, \
+                 mock.patch.object(installer, "install") as install, \
+                 mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+                self.assertEqual(installer.main([]), 1)
+            self.assertIn("checksum mismatch", output.getvalue())
+            disks.assert_not_called()
+            install.assert_not_called()
+
+    def test_invalid_present_cache_stops_before_disk_selection_or_installation(self):
+        with mock.patch.object(installer, "preflight"), \
+             mock.patch.object(installer, "verify_source", return_value=(1, 2, 3, 4)), \
+             mock.patch.object(installer, "open", mock.mock_open(), create=True), \
+             mock.patch.object(installer.fcntl, "flock"), \
+             mock.patch.object(installer, "open_cache", side_effect=installer.PreloadError("bad archive checksum")), \
+             mock.patch.object(installer, "inspect_disks") as disks, \
+             mock.patch.object(installer, "choose_disk") as choose, \
+             mock.patch.object(installer, "install") as install, \
+             mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+            self.assertEqual(installer.main([]), 1)
+        self.assertIn("bad archive checksum", output.getvalue())
+        disks.assert_not_called()
+        choose.assert_not_called()
+        install.assert_not_called()
+
+    def test_validated_cache_context_stays_open_through_confirmation_and_install(self):
+        selected = node("8:16", "sdb")
+        cached = SimpleNamespace(asset={"version": "v1.14.4"}, receipt={"terms_accepted": True})
+        active = []
+
+        @contextmanager
+        def cache(architecture):
+            self.assertEqual(architecture, "amd64")
+            active.append(cached)
+            try:
+                yield cached
+            finally:
+                active.clear()
+
+        def choose(nodes, protected, asset):
+            self.assertEqual(active, [cached])
+            self.assertIs(asset, cached.asset)
+            return selected
+
+        def install(disk, **kwargs):
+            self.assertEqual(active, [cached])
+            self.assertIs(disk, selected)
+            self.assertIs(kwargs["cached_package"], cached)
+            self.assertEqual(kwargs["verified_source"], (1, 2, 3, 4))
+
+        with mock.patch.object(installer, "preflight"), \
+             mock.patch.object(installer, "verify_source", return_value=(1, 2, 3, 4)), \
+             mock.patch.object(installer, "open", mock.mock_open(), create=True), \
+             mock.patch.object(installer.fcntl, "flock"), \
+             mock.patch.object(installer, "open_cache", side_effect=cache), \
+             mock.patch.object(installer, "inspect_disks", return_value=({selected["id"]: selected}, set())), \
+             mock.patch.object(installer, "choose_disk", side_effect=choose), \
+             mock.patch.object(installer, "revalidate"), \
+             mock.patch.object(installer, "install", side_effect=install) as run_install:
+            self.assertEqual(installer.main([]), 0)
+        run_install.assert_called_once()
+        self.assertEqual(active, [])
+
+    def test_absent_cache_keeps_os_only_installation_available(self):
+        selected = node("8:16", "sdb")
+
+        @contextmanager
+        def no_cache(_):
+            yield None
+
+        with mock.patch.object(installer, "preflight"), \
+             mock.patch.object(installer, "verify_source", return_value=(1, 2, 3, 4)), \
+             mock.patch.object(installer, "open", mock.mock_open(), create=True), \
+             mock.patch.object(installer.fcntl, "flock"), \
+             mock.patch.object(installer, "open_cache", side_effect=no_cache), \
+             mock.patch.object(installer, "inspect_disks", return_value=({}, set())), \
+             mock.patch.object(installer, "choose_disk", return_value=selected) as choose, \
+             mock.patch.object(installer, "revalidate"), \
+             mock.patch.object(installer, "install") as install:
+            self.assertEqual(installer.main([]), 0)
+        choose.assert_called_once_with({}, set(), None)
+        self.assertIsNone(install.call_args.kwargs["cached_package"])
+
+    def test_prepared_and_os_only_messages_are_distinct_before_confirmation(self):
+        selected = node("8:16", "sdb")
+        for asset in (None, {"version": "v1.14.4"}):
+            with self.subTest(asset=asset), mock.patch("builtins.input", return_value=""), \
+                 mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+                with self.assertRaisesRegex(installer.InstallError, "Cancelled"):
+                    installer.choose_disk({selected["id"]: selected}, set(), asset)
+            self.assertIn("USB notes, profiles, Wi-Fi settings", output.getvalue())
+            if asset:
+                self.assertIn("verified prepared Obsidian v1.14.4 package", output.getvalue())
+                self.assertIn("first Obsidian setup will work offline", output.getvalue())
+            else:
+                self.assertIn("No prepared Obsidian package was found", output.getvalue())
+                self.assertIn("will need internet", output.getvalue())
+
+    def test_unaccepted_package_refused_before_target_writes(self):
+        cached = SimpleNamespace(receipt={"terms_accepted": False})
+        with mock.patch.object(installer, "source_fingerprint", return_value=(1, 2, 3, 4)), \
+             mock.patch.object(installer, "run") as command, \
+             mock.patch.object(installer, "TargetGuard") as guard:
+            with self.assertRaisesRegex(installer.InstallError, "no accepted terms"):
+                installer.install(node("8:16", "sdb"), verified_source=(1, 2, 3, 4),
+                                  cached_package=cached)
+        command.assert_not_called()
+        guard.assert_not_called()
+
+    def simulate_target_copy(self, fail=False):
+        """Only temporary files; every partition/chroot/mount command is mocked."""
+        cached = SimpleNamespace(asset={"version": "v1.14.4", "name": "obsidian.deb"},
+                                 receipt={"terms_accepted": True})
+        events = []
+        with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+            work = Path(directory) / "work"
+            work.mkdir()
+            root = work / "root"
+            guard = mock.MagicMock()
+
+            def command(*args, **kwargs):
+                events.append(args)
+                return ""
+
+            def copy(package, destination):
+                self.assertIs(package, cached)
+                self.assertEqual(destination, root / "var/lib/vaultboot/offline")
+                self.assertFalse((root / "home/writer").exists())
+                events.append(("copy-prepared-package",))
+                if fail:
+                    raise installer.PreloadError("archive changed during copy")
+
+            patches = {
+                "source_fingerprint": mock.Mock(return_value=(1, 2, 3, 4)),
+                "revalidate": mock.Mock(), "TargetGuard": mock.Mock(return_value=guard),
+                "partition_paths": mock.Mock(return_value={1: "/dev/test1", 2: "/dev/test2", 3: "/dev/test3"}),
+                "uuid_for": mock.Mock(side_effect=["1234-5678", "ABCD-1234"]),
+                "run": mock.Mock(side_effect=command), "copy_cached": mock.Mock(side_effect=copy),
+                "chroot_setup": mock.Mock(side_effect=lambda *args: events.append(("chroot-setup",))),
+            }
+            for name, replacement in patches.items():
+                stack.enter_context(mock.patch.object(installer, name, replacement))
+            stack.enter_context(mock.patch.object(installer.tempfile, "mkdtemp", return_value=str(work)))
+            # Mock mounts leave a real temporary tree behind. TemporaryDirectory
+            # removes that tree after the installer cleanup assertions finish.
+            stack.enter_context(mock.patch.object(Path, "rmdir"))
+            output = stack.enter_context(mock.patch("sys.stdout", new_callable=io.StringIO))
+            if fail:
+                with self.assertRaisesRegex(installer.PreloadError, "changed during copy"):
+                    installer.install(node("8:16", "sdb"), verified_source=(1, 2, 3, 4),
+                                      cached_package=cached)
+            else:
+                installer.install(node("8:16", "sdb"), verified_source=(1, 2, 3, 4),
+                                  cached_package=cached)
+            guard.__exit__.assert_called_once()
+            unmounts = [call[-1] for call in events if call[0] == "umount"]
+            self.assertTrue(unmounts)
+            self.assertTrue(all(Path(path).is_relative_to(root) for path in unmounts))
+            return events, output.getvalue()
+
+    def test_only_prepared_package_is_copied_into_fresh_root_before_success(self):
+        events, output = self.simulate_target_copy()
+        self.assertLess(events.index(("copy-prepared-package",)), events.index(("chroot-setup",)))
+        self.assertIn("Installation complete", output)
+        self.assertIn("first setup works offline", output)
+        self.assertNotIn("Reconnect the network", output)
+
+    def test_failed_archive_copy_never_reports_success_and_cleans_own_mounts(self):
+        events, output = self.simulate_target_copy(fail=True)
+        self.assertNotIn(("chroot-setup",), events)
+        self.assertNotIn("Installation complete", output)
 
 
 if __name__ == "__main__":

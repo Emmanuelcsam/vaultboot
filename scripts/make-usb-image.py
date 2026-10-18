@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Add persistence to a new hybrid image; never open a disk device for writing.
+"""Add persistence and an empty offline slot to a new hybrid regular image.
 
 xorriso's boot replay regenerates the hybrid MBR/GPT and preserves both El Torito
 boot entries. A raw ext4 image is appended outside the ISO, not inside its readonly
@@ -123,15 +123,24 @@ def make_image(iso, output, persistence_mib):
         if "/ union" not in run("debugfs", "-R", "cat persistence.conf", str(filesystem)):
             raise ValueError("Persistence configuration was not written")
         run("e2fsck", "-f", "-n", str(filesystem))
+        offline = work / "offline.empty"
+        with offline.open("xb") as stream:
+            stream.truncate(256 * MIB)
         candidate = work / "usb.img"
         run("xorriso", "-indev", str(iso), "-outdev", str(candidate),
             "-boot_image", "any", "replay", "-append_partition", "3", "0x83", str(filesystem),
+            "-append_partition", "4", "0xDA", str(offline),
+            "-padding", "0",
             "-commit", "-end")
+        # xorriso maps custom GPT type GUIDs to generic MBR 0x83. Finalize only
+        # the new GPT entry so the hybrid MBR retains the intended 0xDA type.
+        helper = Path(__file__).resolve().parents[1] / "build" / "preload-layout.py"
+        offline_layout = json.loads(run(sys.executable, str(helper), "prepare-pc", str(candidate)))
         report = boot_report(candidate)
         entries = check_output(candidate, expected_bytes)
         layout = {"persistence_label": LABEL.decode(), "persistence_bytes": expected_bytes,
                   "image_bytes": candidate.stat().st_size, "mbr_partitions": entries,
-                  "boot_report": report}
+                  "boot_report": report, **offline_layout}
         # Hard-link publication is atomic and fails if another process created
         # the requested path in the meantime. Existing files are never replaced.
         os.link(candidate, output)

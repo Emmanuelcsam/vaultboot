@@ -30,6 +30,13 @@ import time
 import urllib.parse
 import urllib.request
 
+# This same module is shipped inside the OS. The standalone bundle preserves
+# these paths so preparation and consumption share one format and pin policy.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT / 'config/includes.chroot/usr/local/lib/vaultboot'))
+import preload
+PIN_MANIFEST = PROJECT_ROOT / 'config/includes.chroot/usr/share/vaultboot/obsidian-offline.json'
+
 REPOSITORY = "Emmanuelcsam/vaultboot"
 API = "https://api.github.com/repos/" + REPOSITORY
 MIB = 1024 * 1024
@@ -240,6 +247,44 @@ def stage_image(args, directory):
     compressed.unlink()
     print(f"Ready: {tag}, {args.target}, {size / GIB:.2f} GiB; raw SHA-256 {digest}")
     return raw, size, digest
+
+
+def preload_image(args, raw, directory, accept=None):
+    """Prepare a private regular image; all failures precede target selection."""
+    asset = preload.asset_for(preload.load_manifest(PIN_MANIFEST),
+                              'arm64' if args.target == 'pi3-arm64' else 'amd64')
+    with regular_input(raw) as image:
+        slot = preload.locate_slot(image)
+        if slot is None:
+            raise Refused('This image has no offline package partition. Use preview.3 or newer, '
+                          'or --no-preload for an online first setup')
+        if preload.read_slot(image, *slot, asset) is not None:
+            raise Refused('The downloaded image unexpectedly already contains Obsidian')
+    print(f'\nPrepare offline first boot with Obsidian {asset["version"]} ({asset["architecture"]}).')
+    print('Obsidian is proprietary software downloaded directly from its publisher for this drive.')
+    print('Terms: https://obsidian.md/terms  Privacy: https://obsidian.md/privacy')
+    answer = (accept or input)('Type ACCEPT to accept these terms and prepare your offline copy: ').strip()
+    if answer != 'ACCEPT':
+        raise Refused('Obsidian terms were not accepted; no device was erased. '
+                      'Use --no-preload if you prefer to download during first setup')
+    package = directory / 'obsidian-package'
+    space_for(directory, asset['size'])
+    print(f'Downloading and verifying {asset["name"]} directly from Obsidian...', flush=True)
+    with open_url(asset['url']) as source:
+        copy_verified(source, package, asset['sha256'], asset['size'])
+    with raw.open('r+b') as image, regular_input(package) as source:
+        preload.write_slot(image, *slot, asset, source)
+    package.unlink()
+    digest = hashlib.sha256()
+    with regular_input(raw) as image:
+        while True:
+            block = image.read(CHUNK)
+            if not block:
+                break
+            digest.update(block)
+    print('Offline Obsidian copy verified and included. First boot will not need internet.')
+    print(f'Prepared raw SHA-256: {digest.hexdigest()}')
+    return digest.hexdigest()
 
 
 @dataclass(frozen=True)
@@ -645,6 +690,7 @@ def parser():
     result.add_argument("--image", help="local official .img.gz; requires --manifest and --target")
     result.add_argument("--manifest", help="SHA256SUMS accompanying --image")
     result.add_argument("--cache-dir", default="/var/tmp", help="existing staging parent (default /var/tmp; needs compressed + raw image space)")
+    result.add_argument("--no-preload", action="store_true", help="skip Obsidian preparation; destination needs internet for its first app setup")
     return result
 
 
@@ -679,6 +725,8 @@ def main(argv=None):
         raise Refused("No eligible removable drives. Insert a USB drive/card reader and retry")
     with tempfile.TemporaryDirectory(prefix="vaultboot-flash-", dir=args.cache_dir) as temporary:
         raw, size, digest = stage_image(args, Path(temporary))
+        if not args.no_preload:
+            digest = preload_image(args, raw, Path(temporary))
         disks = adapter.inventory()
         show_disks(disks, size)
         selected = args.device or input("Type the whole device path to erase (no default): ").strip()
@@ -704,7 +752,7 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nCancelled. If writing had started, the selected drive may contain an incomplete image.", file=sys.stderr)
         raise SystemExit(130)
-    except (Refused, OSError, ValueError, KeyError) as exc:
+    except (Refused, preload.PreloadError, OSError, ValueError, KeyError) as exc:
         print(f"AUTOFLASH stopped: {exc}", file=sys.stderr)
         print("If writing had started, the selected drive may be incomplete; do not boot it.", file=sys.stderr)
         raise SystemExit(1)

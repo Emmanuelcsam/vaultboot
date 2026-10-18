@@ -47,6 +47,29 @@ class PiLayoutTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "exactly two"):
             layout.validate_layout(table)
 
+    def test_bounded_offline_partition_after_root_is_accepted(self):
+        table = self.table()
+        table["label"] = "gpt"
+        table["partitions"].append({"start": 8388608, "size": 524288,
+                                    "type": layout.OFFLINE_GUID, "name": "VAULTBOOT-OFFLINE"})
+        layout.validate_layout(table)
+
+    def test_offline_partition_overlap_is_refused(self):
+        table = self.table()
+        table["label"] = "gpt"
+        table["partitions"].append({"start": 2097152, "size": 524288,
+                                    "type": layout.OFFLINE_GUID, "name": "VAULTBOOT-OFFLINE"})
+        with self.assertRaisesRegex(ValueError, "offline"):
+            layout.validate_layout(table)
+
+    def test_wrong_offline_partition_size_is_refused(self):
+        table = self.table()
+        table["label"] = "gpt"
+        table["partitions"].append({"start": 8388608, "size": 524289,
+                                    "type": layout.OFFLINE_GUID, "name": "VAULTBOOT-OFFLINE"})
+        with self.assertRaisesRegex(ValueError, "offline"):
+            layout.validate_layout(table)
+
     def test_overlap_refused(self):
         table = self.table()
         table["partitions"][1]["start"] = 4096

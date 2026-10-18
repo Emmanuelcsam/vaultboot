@@ -12,15 +12,22 @@
 4. In a writable USB-image VM, create a note, reboot, and verify it survives
    alongside the installed app. Boot with networking disabled and verify the
    cached app opens. Confirm the ISO warns about volatile storage.
-   Exercise the autoflasher against a disposable emulated USB disk and verify
-   its complete write/read-back path. Test refusals for system/source disks,
+   Exercise the default autoflasher against a disposable emulated USB disk and
+   verify its package download, terms receipt, and complete write/read-back path.
+   Cold-boot that fresh prepared drive with no network device and no seeded
+   user cache; verify Obsidian opens. Repeat for the ARM64 software image. Test refusals for system/source disks,
    partitions, in-use targets, changed identity, bad checksums, and truncation.
    Install to a separate disposable virtual disk, remove the live USB, and boot
    the installed disk independently in both BIOS and UEFI modes. Verify saved
-   notes after reboot. Never use a developer's physical disk for these checks.
+   notes after reboot. The first installed boot must open Obsidian with no
+   network device and no USB attached, using only the installer-carried package.
+   Never use a developer's physical disk for these checks.
 5. Record what was tested, the environment, date, source commit, image hashes,
    limitations, and any hardware tests. Do not call an untested image stable.
-6. Publish the image, ISO, package manifest, all corresponding source parts,
+6. Build the standalone AUTOFLASH bundle with `scripts/package-autoflash.py`,
+   retaining the canonical shared module and pins. Confirm public image slots
+   are empty; never publish a prepared image containing Obsidian.
+7. Publish the image, ISO, AUTOFLASH bundle, package manifest, all corresponding source parts,
    source reconstruction instructions, test report, and `SHA256SUMS` together.
    Recheck checksums after downloading release assets.
 

@@ -1,8 +1,9 @@
 #!/usr/bin/python3
 """Interactive, offline amd64 installer. Importing this module never probes disks.
 
-The live squashfs is the only installation source. All disk writes are behind
-whole-disk identity checks and a fresh, disk-specific terminal confirmation.
+The live squashfs supplies the fresh OS; an optional verified, pinned Obsidian
+package supplies offline first setup. All disk writes are behind whole-disk
+identity checks and a fresh, disk-specific terminal confirmation.
 """
 
 import fcntl
@@ -20,6 +21,8 @@ import subprocess
 import sys
 import tempfile
 import time
+
+from preload import PreloadError, copy_cached, open_cache
 
 
 SOURCE = Path("/run/live/medium/live/filesystem.squashfs")
@@ -375,13 +378,18 @@ def preflight():
     run("mount", "--make-rprivate", "/")
 
 
-def choose_disk(nodes, protected):
+def choose_disk(nodes, protected, offline_asset=None):
     candidates = []
     print("\nVaultboot — fresh Debian installation\n")
     print("This erases EVERY partition and file on ONE selected disk.")
     print("Back up that disk first. Disconnect other backup/data disks if practical.")
-    print("USB notes, Obsidian downloads, Wi-Fi settings and other live changes are NOT copied.")
-    print("The operating system installs offline; the first Obsidian download needs internet.")
+    print("USB notes, profiles, Wi-Fi settings and other live changes are NOT copied.")
+    if offline_asset:
+        print(f"The verified prepared Obsidian {offline_asset['version']} package will be copied.")
+        print("The operating system and first Obsidian setup will work offline.")
+    else:
+        print("No prepared Obsidian package was found. The operating system installs offline;")
+        print("the first Obsidian download on the installed system will need internet.")
     print("The installed account is writer, password live, with autologin and local sudo.\n")
     for node in sorted(nodes.values(), key=lambda item: item["name"]):
         if node["type"] != "disk":
@@ -562,10 +570,12 @@ def chroot_setup(root, selected, guard, root_uuid, root_device):
             policy.chmod(saved_mode)
 
 
-def install(selected, source=SOURCE, verified_source=None):
+def install(selected, source=SOURCE, verified_source=None, cached_package=None):
     source_id = source_fingerprint(source)
     if verified_source is None or source_id != verified_source:
         raise InstallError("A verified, unchanged live installation source is required before erasing.")
+    if cached_package is not None and cached_package.receipt.get("terms_accepted") is not True:
+        raise InstallError("The prepared Obsidian package has no accepted terms. Nothing was erased.")
     mounts = []
     work = Path(tempfile.mkdtemp(prefix="vaultboot-install-", dir="/run"))
     root = work / "root"
@@ -606,6 +616,13 @@ def install(selected, source=SOURCE, verified_source=None):
         guard.check()
         run("unsquashfs", "-f", "-processors", "2", "-d", str(root), str(source))
         configure_root(root, root_uuid, esp_uuid)
+        if cached_package is not None:
+            print("Copying the verified prepared Obsidian package for offline first setup…", flush=True)
+            guard.check()
+            # Keep the pre-erase validated descriptor open throughout copying.
+            # The shared helper rehashes the bytes and publishes the package
+            # and accepted receipt atomically. Never copy the live user's home.
+            copy_cached(cached_package, root / "var/lib/vaultboot/offline")
         for directory in ("dev", "proc", "sys", "run", "boot/efi"):
             (root / directory).mkdir(parents=True, exist_ok=True)
         run("mount", "--", partitions[2], str(root / "boot/efi"))
@@ -642,7 +659,10 @@ def install(selected, source=SOURCE, verified_source=None):
         print("\nInstallation complete. Your USB notes have not been copied or changed.")
         print("Shut down, unplug the live USB, then select this disk in the firmware boot menu.")
         print("Keep Secure Boot disabled. Account: writer; password: live (change it with passwd).")
-        print("Reconnect the network and download Obsidian on the installed system.")
+        if cached_package is not None:
+            print("The verified prepared Obsidian package is included; first setup works offline.")
+        else:
+            print("Reconnect the network and download Obsidian on the installed system.")
         print("Restore your backed-up vault separately when ready. Do not unplug a running disk.")
 
 
@@ -659,12 +679,17 @@ def main(argv=None):
             except BlockingIOError as error:
                 raise InstallError("Another installation is already running.") from error
             verified_source = verify_source()
-            nodes, protected = inspect_disks()
-            selected = choose_disk(nodes, protected)
-            revalidate(selected)
-            install(selected, verified_source=verified_source)
+            # Cache validation (including the complete archive checksum) must
+            # finish before offering a disk or asking permission to erase it.
+            # An invalid present cache aborts; an absent cache is OS-only setup.
+            with open_cache("amd64") as cached_package:
+                nodes, protected = inspect_disks()
+                selected = choose_disk(nodes, protected,
+                                       cached_package.asset if cached_package is not None else None)
+                revalidate(selected)
+                install(selected, verified_source=verified_source, cached_package=cached_package)
         return 0
-    except (InstallError, OSError, subprocess.CalledProcessError, ValueError, KeyError) as error:
+    except (InstallError, PreloadError, OSError, subprocess.CalledProcessError, ValueError, KeyError) as error:
         print(f"\nInstallation stopped: {error}\nDo not boot a partially installed target.", file=sys.stderr)
         return 1
     except (EOFError, KeyboardInterrupt):

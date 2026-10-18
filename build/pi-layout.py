@@ -9,13 +9,17 @@ import stat
 import struct
 import subprocess
 
+OFFLINE_GUID = "86f4a9d0-6c3e-4da6-9b18-3d0b37e4af21"
+OFFLINE_BYTES = 256 * 1024 * 1024
+
 
 def validate_layout(table):
     if table.get("label") not in {"dos", "gpt"} or table.get("sectorsize") != 512:
         raise ValueError("Expected a DOS or GPT table with 512-byte sectors")
     partitions = table.get("partitions", [])
-    if len(partitions) != 2:
-        raise ValueError("Expected exactly two Debian Pi partitions")
+    offline = [p for p in partitions if str(p.get("type", "")).lower() == OFFLINE_GUID]
+    if len(partitions) != 2 + len(offline) or len(offline) > 1:
+        raise ValueError("Expected exactly two Debian Pi partitions and at most one offline slot")
     boot_types = {"c", "b", "0c", "0b", "ef", "ef00", "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"}
     root_types = {"83", "8300", "0fc63daf-8483-4772-8e79-3d69d8477de4", "b921b045-1df0-41c3-af44-4c6f280d3fae"}
     boots = [p for p in partitions if str(p.get("type", "")).lower() in boot_types]
@@ -30,6 +34,12 @@ def validate_layout(table):
             raise ValueError("Unsafe partition extent")
     if boot["start"] + boot["size"] > root["start"]:
         raise ValueError("Overlapping or unordered Pi partitions")
+    if offline:
+        slot = offline[0]
+        if (table["label"] != "gpt" or slot.get("name") != "VAULTBOOT-OFFLINE"
+                or slot["size"] * 512 != OFFLINE_BYTES or slot["start"] % 2048
+                or slot["start"] < root["start"] + root["size"]):
+            raise ValueError("Invalid or overlapping Pi offline partition")
     return boot, root
 
 
@@ -63,8 +73,15 @@ def main():
             validate_hybrid_mbr(stream.read(512), boot)
     if max(p["start"] + p["size"] for p in table["partitions"]) * 512 > args.image.stat().st_size:
         raise ValueError("Image does not contain its complete partition table extents")
-    print(json.dumps({"partitiontable": table, "boot_partition": partition_number(table, boot),
-                      "root_partition": partition_number(table, root)}, indent=2))
+    result = {"partitiontable": table, "boot_partition": partition_number(table, boot),
+              "root_partition": partition_number(table, root)}
+    for partition in table["partitions"]:
+        if str(partition.get("type", "")).lower() == OFFLINE_GUID:
+            result.update(offline_offset_bytes=partition["start"] * 512,
+                          offline_size_bytes=partition["size"] * 512,
+                          offline_partition=partition_number(table, partition),
+                          offline_type_guid=OFFLINE_GUID, offline_name="VAULTBOOT-OFFLINE")
+    print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":

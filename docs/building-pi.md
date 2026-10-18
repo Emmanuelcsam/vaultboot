@@ -34,11 +34,12 @@ inside the disposable VM.
 From the checkout, choose a new output directory:
 
 ```sh
-sudo env VAULTBOOT_VERSION=0.1.0-preview.1 \
+sudo env VAULTBOOT_VERSION=0.1.0-preview.3 \
   ./build/pi.sh /build/debian-pi-base.tar.xz /build/pi-artifacts
 ```
 
-The result is an 8 GiB raw image compressed as `.img.gz`, intended for a
+The result is an 8 GiB system image plus a 256 MiB offline-preparation partition,
+compressed as `.img.gz`, intended for a
 **16 GB or larger microSD card**. It uses an ordinary writable root filesystem,
 so notes persist without a separate live-overlay partition. Larger cards do
 not automatically enlarge the root filesystem.

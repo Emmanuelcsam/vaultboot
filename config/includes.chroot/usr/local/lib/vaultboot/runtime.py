@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import fcntl
 import hashlib
 import json
@@ -27,6 +28,8 @@ import urllib.request
 import uuid
 import xml.etree.ElementTree as ET
 
+import preload
+
 
 RELEASE_API = "https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest"
 DOWNLOAD_PREFIX = "https://github.com/obsidianmd/obsidian-releases/releases/download/"
@@ -36,6 +39,7 @@ LOG = logging.getLogger("vaultboot")
 LIVE_SYSTEM = Path("/run/live/medium/live/filesystem.squashfs")
 POWER_SUPPLIES = Path("/sys/class/power_supply")
 KEYBOARD_RULES = Path("/usr/share/X11/xkb/rules/base.xml")
+PRELOAD_ERROR = Path("/var/lib/vaultboot/offline-error.txt")
 
 
 class SetupError(Exception):
@@ -464,20 +468,26 @@ Vaultboot is an independent Debian-based project, not an official Obsidian produ
         if probe.returncode:
             raise SetupError("Linux user namespaces are unavailable, so Obsidian cannot start with its sandbox. Boot the supported Vaultboot image with its default kernel settings. See the maintenance terminal and session log for diagnostics.")
 
-    def install(self, opener=network_open) -> dict:
-        """Download/check/extract before atomically changing the launch target."""
+    def install(self, opener=network_open, *, cached=None) -> dict:
+        """Check/extract online or prepared bytes before changing the launch target."""
         if os.geteuid() == 0:
-            raise SetupError("Download Obsidian as the normal writer account, never as root.")
+            raise SetupError("Install Obsidian as the normal writer account, never as root.")
         with (self.state / "install.lock").open("a") as lock:
             try:
                 fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
                 raise SetupError("Another Obsidian download is already running.") from exc
-            with opener(RELEASE_API) as response:
-                metadata = response.read(2_000_001)
-            if len(metadata) > 2_000_000:
-                raise SetupError("The release response is unexpectedly large.")
-            asset = select_asset(json.loads(metadata), debian_architecture())
+            if cached is None:
+                with opener(RELEASE_API) as response:
+                    metadata = response.read(2_000_001)
+                if len(metadata) > 2_000_000:
+                    raise SetupError("The release response is unexpectedly large.")
+                asset = select_asset(json.loads(metadata), debian_architecture())
+            else:
+                asset = dict(cached.asset)
+                if asset["architecture"] != debian_architecture():
+                    raise SetupError("The prepared Obsidian package is for another computer architecture.")
+                cached.stream.seek(0)
             existing = self.current / "release.json"
             if self.executable() and existing.is_file():
                 try:
@@ -495,15 +505,16 @@ Vaultboot is an independent Debian-based project, not an official Obsidian produ
                 archive = scratch / asset["name"]
                 digest = hashlib.sha256()
                 received = 0
-                with opener(asset["url"]) as response, archive.open("wb") as output:
+                source = nullcontext(cached.stream) if cached is not None else opener(asset["url"])
+                with source as response, archive.open("wb") as output:
                     while chunk := response.read(1024 * 1024):
                         received += len(chunk)
                         if received > asset["size"] or received > MAX_DOWNLOAD:
-                            raise SetupError("The download is larger than its published size. Nothing was installed.")
+                            raise SetupError("The Obsidian package is larger than its published size. Nothing was installed.")
                         digest.update(chunk)
                         output.write(chunk)
                 if received != asset["size"] or digest.hexdigest() != asset["sha256"]:
-                    raise SetupError("The Obsidian download did not match its published SHA-256 checksum. Nothing was installed. Please retry the download.")
+                    raise SetupError("The Obsidian package did not match its published SHA-256 checksum. Nothing was installed. " + ("Prepare the drive again, or choose Download Obsidian." if cached is not None else "Please retry the download."))
                 extracted = scratch / "extracted"
                 if asset["format"] == "tar":
                     extract_tar(archive, extracted)
@@ -553,13 +564,17 @@ Vaultboot is an independent Debian-based project, not an official Obsidian produ
             except OSError:
                 LOG.warning("Could not remove an older cached release: %s", candidate.name)
 
-    def download_ui(self) -> bool:
-        progress = subprocess.Popen(["zenity", "--progress", "--pulsate", "--auto-close", "--no-cancel", "--title=Vaultboot", "--text=Downloading and verifying Obsidian from its publisher.\nThis can take a few minutes.", "--width=520"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    def download_ui(self, cached=None) -> bool:
+        message = ("Preparing the verified Obsidian package from this drive.\nNo internet connection is needed."
+                   if cached is not None else "Downloading and verifying Obsidian from its publisher.\nThis can take a few minutes.")
+        progress = subprocess.Popen(["zenity", "--progress", "--pulsate", "--auto-close", "--no-cancel", "--title=Vaultboot", "--text=" + message, "--width=520"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
-            asset = self.install()
+            asset = self.install(cached=cached) if cached is not None else self.install()
         except Exception as exc:
             LOG.exception("Obsidian installation failed")
-            message = str(exc) if isinstance(exc, SetupError) else "The download could not finish. Check your internet connection and try again. Your previous version, if any, was kept. Details are in the session log."
+            message = str(exc) if isinstance(exc, SetupError) else (
+                "The prepared copy could not be installed. Check free storage and try again. Your previous version, if any, was kept. Details are in the session log."
+                if cached is not None else "The download could not finish. Check your internet connection and try again. Your previous version, if any, was kept. Details are in the session log.")
             progress.terminate()
             progress.wait()
             dialog("error", message)
@@ -571,14 +586,52 @@ Vaultboot is an independent Debian-based project, not an official Obsidian produ
         LOG.info("Ready to run %s", asset["version"])
         return True
 
+    def prepared_setup(self) -> str:
+        """Use an accepted, image-pinned local package without touching the network."""
+        try:
+            with preload.open_cache(debian_architecture()) as cached:
+                if cached is None:
+                    if PRELOAD_ERROR.is_file():
+                        with PRELOAD_ERROR.open() as failure:
+                            raise SetupError(failure.read(2000).strip() or "The prepared copy could not be loaded from this drive.")
+                    return "absent"
+                if cached.receipt.get("terms_accepted") is not True:
+                    raise SetupError("The prepared copy has no recorded acceptance. Prepare the drive again, or choose Download Obsidian to review its terms here.")
+                if not self.download_ui(cached):
+                    return "failed"
+                acknowledgement = {"schema": 1, "version": cached.asset["version"],
+                                   "sha256": cached.asset["sha256"], "terms_accepted": True,
+                                   "source": "prepared-media"}
+                receipt = self.state / ".prepared-accepted.tmp"
+                receipt.write_text(json.dumps(acknowledgement, indent=2) + "\n")
+                os.replace(receipt, self.state / "prepared-accepted.json")
+                return "installed"
+        except (preload.PreloadError, SetupError, OSError, ValueError) as exc:
+            LOG.exception("Prepared Obsidian installation failed")
+            dialog("error", "The prepared Obsidian copy could not be used.\n\n" + str(exc)[:2000] + "\n\nYou can retry the prepared copy or connect to the internet and choose Download Obsidian.")
+            return "failed"
+
     def setup(self) -> bool:
+        if self.executable():
+            return True
+        prepared = self.prepared_setup()
+        if prepared == "installed":
+            return True
         while not self.executable():
             choices = ["Download Obsidian", "Wi-Fi / Ethernet", "Keyboard layout", "Time zone"]
+            if prepared == "failed":
+                choices.insert(0, "Retry prepared Obsidian")
             if self.can_install():
                 choices.append("Install to internal drive")
             choices += ["Help / storage status", "Power off"]
-            choice = self.choose("Set up Vaultboot", "Connect to the internet, then download Obsidian directly from its publisher. Internet is needed once; later starts work offline. Use Keyboard layout before entering a Wi-Fi password.\n\nObsidian is proprietary software. Choosing Download agrees to https://obsidian.md/terms\nPrivacy: https://obsidian.md/privacy", choices, height=540)
-            if choice == "Download Obsidian":
+            guidance = ("Retry the prepared copy, or connect to the internet to download Obsidian directly from its publisher."
+                        if prepared == "failed" else "Connect to the internet, then download Obsidian directly from its publisher. Internet is needed once; later starts work offline.")
+            choice = self.choose("Set up Vaultboot", guidance + " Use Keyboard layout before entering a Wi-Fi password.\n\nObsidian is proprietary software. Choosing Download agrees to https://obsidian.md/terms\nPrivacy: https://obsidian.md/privacy", choices, height=540)
+            if choice == "Retry prepared Obsidian":
+                prepared = self.prepared_setup()
+                if prepared == "installed":
+                    return True
+            elif choice == "Download Obsidian":
                 if self.download_ui():
                     break
             elif choice == "Wi-Fi / Ethernet":

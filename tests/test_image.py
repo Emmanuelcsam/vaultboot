@@ -125,7 +125,8 @@ class HybridIntegrationTests(unittest.TestCase):
                       "-isohybrid-mbr", str(ISOLINUX / "isohdpfx.bin"),
                       "-b", "isolinux.bin", "-c", "boot.cat", "-no-emul-boot",
                       "-boot-load-size", "4", "-boot-info-table", "-eltorito-alt-boot",
-                      "-e", "efi.img", "-no-emul-boot", "-isohybrid-gpt-basdat", str(tree))
+                      "-e", "efi.img", "-no-emul-boot", "-isohybrid-gpt-basdat",
+                      "-partition_offset", "16", str(tree))
             original = iso.read_bytes()
             image.make_image(iso, output, 64)
             self.assertEqual(iso.read_bytes(), original)
@@ -133,7 +134,10 @@ class HybridIntegrationTests(unittest.TestCase):
             self.assertEqual(layout["persistence_bytes"], 64 * 1024 * 1024)
             self.assertIn("BIOS", layout["boot_report"])
             self.assertIn("UEFI", layout["boot_report"])
-            self.assertEqual(layout["mbr_partitions"][-1]["type"], 0x83)
+            self.assertEqual(layout["mbr_partitions"][-1]["type"], 0xDA)
+            self.assertEqual(layout["offline_size_bytes"], 256 * 1024 * 1024)
+            self.assertGreater(layout["offline_offset_bytes"], layout["persistence_bytes"])
+            self.assertEqual(layout["offline_name"], "VAULTBOOT-OFFLINE")
 
 
 if __name__ == "__main__":

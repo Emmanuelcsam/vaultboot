@@ -9,7 +9,10 @@ repository. Open a terminal in that folder and run:
 
 AUTOFLASH asks for PC or Raspberry Pi, downloads the newest published image
 **including preview releases**, verifies its SHA-256, and checks the complete
-gzip file before touching a drive. It lists drives with their model, capacity,
+gzip file before touching a drive. It then asks you to accept Obsidian’s terms,
+downloads the pinned official Obsidian package, and checks its exact size and
+SHA-256. This prepares offline first boot for the target architecture.
+It lists drives with their model, capacity,
 and safety status. Type the whole drive path yourself, then type the exact
 `ERASE ...` phrase shown for that drive. There is no default drive and no
 unattended confirmation option.
@@ -70,7 +73,7 @@ Choose the PC image, or pin a specific release:
 
 ```sh
 ./autoflash.sh --target amd64
-./autoflash.sh --target pi3-arm64 --release v0.1.0-preview.2
+./autoflash.sh --target pi3-arm64 --release v0.1.0-preview.3
 ```
 
 Supply a whole drive path from the listing. The typed confirmation is still
@@ -84,7 +87,7 @@ Use an image and `SHA256SUMS` already downloaded from the same official release:
 
 ```sh
 ./autoflash.sh --target amd64 \
-  --image /path/to/vaultboot-0.1.0-preview.2-amd64.img.gz \
+  --image /path/to/vaultboot-0.1.0-preview.3-amd64.img.gz \
   --manifest /path/to/SHA256SUMS
 ```
 
@@ -93,13 +96,38 @@ and read-back checks apply to local files. The official HTTPS release and its
 manifest are the trust source; SHA-256 detects corruption and mismatch, and
 is not an independent signature from another publisher.
 
-The script preserves every image byte, including the Pi's hybrid boot records.
+AUTOFLASH fills the image’s reserved 256 MiB preparation partition in a private
+staging file, then calculates the prepared image’s SHA-256. It preserves the
+boot records and all other partitions, including the Pi’s hybrid boot records.
 It clears at most the last 1 MiB **outside** the image to remove stale partition
 metadata from a previously used drive, then verifies that area as well. It does
-not enlarge partitions or relocate the Pi's GPT. After flushing, it reads back
+not enlarge partitions or relocate the Pi's GPT during flashing. After flushing,
+it reads back
 all written image bytes and checks their SHA-256. Wait for the success message
 before removing the drive. This is imaging, not a secure erase of all old data
 in unused space.
+
+## Offline first boot
+
+The preparation computer needs internet to download Obsidian, even when you
+supply an already downloaded OS image with `--image`. The destination does not:
+the prepared USB or microSD carries the verified package. The PC installer
+carries this same package into a fresh internal-disk installation.
+
+The public image contains an empty preparation partition. Only AUTOFLASH fills
+it with your copy, directly from the publisher, after you accept its terms.
+Use the flasher from the same release as your image. Images older than preview.3
+have no preparation partition and are rejected by the default preparation path.
+
+To skip preparation deliberately:
+
+```sh
+./autoflash.sh --target amd64 --no-preload
+```
+
+This still verifies and flashes the OS, but the destination needs internet for
+its first Obsidian download. Never bypass a corrupt preparation warning: retry
+with the matching release, or explicitly choose the online setup path.
 
 ## Manual flashing on Windows, or with a graphical tool
 
@@ -114,6 +142,10 @@ in unused space.
    requires an uncompressed image, extract the `.gz` first and select `.img`.
 4. Boot the PC from USB, or put the card into the Pi. PC firmware requirements
    and the experimental Pi hardware status are in [hardware.md](hardware.md).
+
+Manual flashing leaves the preparation partition empty. Connect the destination
+to the internet for its first Obsidian download. Offline preparation currently
+requires AUTOFLASH on native Linux or macOS.
 
 The optional PC internal-disk installer is available in
 **v0.1.0-preview.2 and later**. A USB made from preview.1 needs reflashing to gain

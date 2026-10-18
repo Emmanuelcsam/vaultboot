@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "assets": {
+    "amd64": {
+      "version": "v1.14.4",
+      "architecture": "amd64",
+      "format": "deb",
+      "name": "obsidian_1.14.4_amd64.deb",
+      "url": "https://github.com/obsidianmd/obsidian-releases/releases/download/v1.14.4/obsidian_1.14.4_amd64.deb",
+      "size": 108364996,
+      "sha256": "85b10dcba6edfc1c0460a6d18260cf31c30447a444bd858a6440b9c9c8806d25"
+    },
+    "arm64": {
+      "version": "v1.14.4",
+      "architecture": "arm64",
+      "format": "tar",
+      "name": "obsidian-1.14.4-arm64.tar.gz",
+      "url": "https://github.com/obsidianmd/obsidian-releases/releases/download/v1.14.4/obsidian-1.14.4-arm64.tar.gz",
+      "size": 132065265,
+      "sha256": "fc212804515713ed85fe5ef5bc4b009872bcc01847c4be4fcc14971deee2a42d"
+    }
+  }
+}

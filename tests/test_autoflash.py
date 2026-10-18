@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import struct
 import sys
 import tempfile
 import unittest
@@ -272,6 +273,99 @@ class AutoflashTests(unittest.TestCase):
         self.assertEqual(raw.read_bytes(), self.data)
         self.assertEqual((size, digest), (len(self.data), self.sha))
         self.assertEqual(self.adapter.opens, 0)
+
+
+class OfflinePreparationTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.raw = self.root / 'staged.img'
+        self.data = b'fixture official app bytes' * 100
+        self.asset = dict(version='v1.14.4', architecture='amd64', format='deb',
+                          name='obsidian_1.14.4_amd64.deb', size=len(self.data),
+                          sha256=hashlib.sha256(self.data).hexdigest(),
+                          url='https://github.com/obsidianmd/obsidian-releases/releases/download/v1.14.4/obsidian_1.14.4_amd64.deb')
+        self.manifest = self.root / 'pins.json'
+        self.manifest.write_text(json.dumps({'schema': 1, 'assets': {'amd64': self.asset}}))
+        image = bytearray(2 * flash.MIB)
+        image[510:512] = b'\x55\xaa'
+        image[498] = 0xDA  # MBR partition four, distinct from boot sectors.
+        struct.pack_into('<II', image, 502, 128, len(image) // 512 - 128)
+        self.original = bytes(image)
+        self.raw.write_bytes(image)
+        self.args = argparse.Namespace(target='amd64')
+        patch = mock.patch.object(flash, 'PIN_MANIFEST', self.manifest)
+        patch.start()
+        self.addCleanup(patch.stop)
+        patch = mock.patch('sys.stdout', new=io.StringIO())
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def prepare(self, data=None, acceptance='ACCEPT'):
+        with mock.patch.object(flash, 'open_url', return_value=io.BytesIO(self.data if data is None else data)) as download:
+            digest = flash.preload_image(self.args, self.raw, self.root, accept=lambda _: acceptance)
+        return digest, download
+
+    def test_prepared_image_verifies_and_flashes_whole_image(self):
+        digest, download = self.prepare()
+        download.assert_called_once_with(self.asset['url'])
+        prepared = self.raw.read_bytes()
+        self.assertEqual(prepared[:65536], self.original[:65536])
+        self.assertEqual(digest, hashlib.sha256(prepared).hexdigest())
+        self.assertFalse((self.root / 'obsidian-package').exists())
+        with self.raw.open('rb') as source:
+            receipt = flash.preload.read_slot(source, *flash.preload.locate_slot(source), self.asset)
+        self.assertTrue(receipt['terms_accepted'])
+        adapter = FakeDisks(self.root, len(prepared))
+        flash.flash(adapter, adapter.disk, self.raw, len(prepared), digest, adapter.disk.confirmation())
+        self.assertEqual(adapter.path.read_bytes()[:len(prepared)], prepared)
+        self.assertEqual(adapter.ejects, 1)
+
+    def test_corrupt_download_never_modifies_staged_image(self):
+        with self.assertRaisesRegex(flash.Refused, 'SHA-256'):
+            self.prepare(data=b'X' * len(self.data))
+        self.assertEqual(self.raw.read_bytes(), self.original)
+
+    def test_short_download_never_modifies_staged_image(self):
+        with self.assertRaisesRegex(flash.Refused, 'Incomplete'):
+            self.prepare(data=self.data[:-1])
+        self.assertEqual(self.raw.read_bytes(), self.original)
+
+    def test_terms_declined_before_download(self):
+        with mock.patch.object(flash, 'open_url') as download:
+            with self.assertRaisesRegex(flash.Refused, 'terms were not accepted'):
+                flash.preload_image(self.args, self.raw, self.root, accept=lambda _: 'no')
+        download.assert_not_called()
+        self.assertEqual(self.raw.read_bytes(), self.original)
+
+    def test_old_image_rejected_before_terms_or_download(self):
+        data = bytearray(self.original)
+        data[498:510] = bytes(12)
+        self.raw.write_bytes(data)
+        accept = mock.Mock()
+        with mock.patch.object(flash, 'open_url') as download, self.assertRaisesRegex(flash.Refused, 'no offline package partition'):
+            flash.preload_image(self.args, self.raw, self.root, accept=accept)
+        accept.assert_not_called()
+        download.assert_not_called()
+
+    def test_preload_is_default_and_opt_out_is_explicit(self):
+        self.assertFalse(flash.parser().parse_args([]).no_preload)
+        self.assertTrue(flash.parser().parse_args(['--no-preload']).no_preload)
+
+    def test_failed_preparation_never_selects_or_writes_target(self):
+        adapter = FakeDisks(self.root, len(self.original))
+        with mock.patch.object(flash, 'LinuxDisks', return_value=adapter), \
+             mock.patch.object(flash.platform, 'system', return_value='Linux'), \
+             mock.patch.object(flash.sys.stdin, 'isatty', return_value=True), \
+             mock.patch.object(flash.os, 'geteuid', return_value=0), \
+             mock.patch.object(flash, 'stage_image', return_value=(self.raw, len(self.original), 'unused')), \
+             mock.patch.object(flash, 'preload_image', side_effect=flash.preload.PreloadError('corrupt')), \
+             mock.patch('builtins.input') as prompt:
+            with self.assertRaisesRegex(flash.preload.PreloadError, 'corrupt'):
+                flash.main(['--target', 'amd64', '--cache-dir', str(self.root)])
+        prompt.assert_not_called()
+        self.assertEqual(adapter.opens, 0)
 
 
 class MetadataTests(unittest.TestCase):

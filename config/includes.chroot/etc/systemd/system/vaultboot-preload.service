@@ -1,0 +1,21 @@
+[Unit]
+Description=Prepare the local Obsidian package from the boot drive
+After=local-fs.target
+Before=display-manager.service
+ConditionPathExists=/usr/share/vaultboot/obsidian-offline.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/lib/vaultboot/bootpreload.py
+TimeoutStartSec=180
+StateDirectory=vaultboot
+StateDirectoryMode=0755
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/vaultboot
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=graphical.target

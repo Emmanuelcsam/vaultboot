@@ -12,9 +12,10 @@ resize existing partitions, provide dual boot, or encrypt the installed disk.
 Use an unused writable disk of at least **16 GiB**. Disconnect other backup/data
 drives when practical so there are fewer disks to confuse with the target.
 
-1. Flash and boot the current **amd64 USB image**. First confirm its display,
-   keyboard and networking work on the PC. Hardware support is unchanged by
-   installation.
+1. Prepare the current **amd64 USB image** with AUTOFLASH, accepting Obsidian's
+   terms when prompted to include its verified package for offline setup. Boot
+   the USB and confirm its display and keyboard work on the PC. Check networking
+   when available. Hardware support is unchanged by installation.
 2. Press `Ctrl+Alt+S` and choose **Install to internal drive**. Alternatively,
    press `Ctrl+Alt+T` and run `sudo vaultboot-install`.
 3. Read the disk list, including device path, size, model and serial number.
@@ -30,11 +31,22 @@ drives when practical so there are fewer disks to confuse with the target.
    menu if necessary. Both BIOS GRUB and the UEFI fallback loader are installed;
    the installer does not change firmware boot variables.
 
-The installed system has a **fresh home**. Notes, cached Obsidian downloads,
-Wi-Fi passwords, plugins and other changes on the live USB are **not copied**.
+The installed system has a **fresh home**. Notes, the live user's downloaded or
+extracted app cache, Wi-Fi passwords, plugins and settings are **not copied**.
 They remain on that USB. Restore your backed-up vault separately, including its
-hidden `.obsidian` folder if you want its settings. The base Debian installation
-needs no network; downloading Obsidian on the new system still needs internet.
+hidden `.obsidian` folder if you want its settings.
+
+If AUTOFLASH prepared the USB's offline package, the installer verifies it before
+offering a disk and copies only that official package and its accepted-terms
+receipt into the fresh system. Debian installation and the installed system's
+first Obsidian setup then work **without a network connection**. A corrupt or
+incomplete prepared cache stops installation before erasure. No app package is
+executed as root; the installed desktop sets it up as `writer`.
+
+If you flashed without preparation, such as with `--no-preload`, the installer
+clearly reports that only the base OS can be installed offline. The new system
+will need internet for its first Obsidian download. Installing Obsidian normally
+in the live USB session does not create the prepared package used by the installer.
 
 The account remains `writer`, initially with password `live`, automatic graphical
 login and passwordless local sudo. Change the password with `passwd`. Anyone with

@@ -17,4 +17,4 @@ cat > /etc/NetworkManager/conf.d/vaultboot.conf <<'EOF'
 [ifupdown]
 managed=true
 EOF
-systemctl enable NetworkManager.service lightdm.service systemd-timesyncd.service
+systemctl enable NetworkManager.service lightdm.service systemd-timesyncd.service vaultboot-preload.service

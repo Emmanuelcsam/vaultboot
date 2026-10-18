@@ -10,9 +10,14 @@ PC BIOS / UEFI
     -> Obsidian, running as the normal local user
 ```
 
-The first session installs Obsidian into the user's data directory from its
-official upstream release. The installer is separate from the OS build, so
-the public image contains no Obsidian binary. A tiny system menu provides the
+AUTOFLASH downloads a pinned official Obsidian package into a reserved raw
+partition in its private staged image. It verifies both publisher bytes and
+the complete prepared image before writing a drive. A root service reads only
+the actual boot disk, validates the package against the image’s own pins, and
+stages a protected cache before graphical login. The normal-user session
+verifies it again and extracts it into the user’s data directory. No package
+code runs as root. The public image contains an empty slot and no Obsidian binary.
+Unprepared media offers the usual online setup. A tiny system menu provides the
 necessary network, recovery, update, and power controls. Standard Debian tools
 remain accessible for maintenance.
 
@@ -39,9 +44,19 @@ account; it does not silently copy personal vaults, passwords, or Wi-Fi profiles
 Pi cards already use an ordinary writable root and do not use this PC installer.
 
 The host-side autoflasher downloads and validates compressed images before
-writing, identifies eligible removable media, requires explicit erase consent,
+writing, prepares the offline package after terms acceptance, identifies
+eligible removable media, requires explicit erase consent,
 and checks the written image. It does not install onto the host's system disk.
 
 Builders use stable Debian package repositories at build time. The release
 manifest records installed versions and matching sources accompany binaries.
 Rebuilds against changing mirrors are not claimed to be bit-for-bit reproducible.
+
+The raw preparation format and trusted pins live in `preload.py` and
+`obsidian-offline.json`, shared with the standalone flasher bundle. A receipt
+cannot override those pins. Corrupt packages, unprotected caches, partial
+receipts, and changed bytes are rejected. The PC installer validates its held
+cache descriptor before offering a disk and rehashes it while copying into the
+new root. Personal vaults and live-user application profiles remain separate.
+Existing app installations take precedence; an online update never silently
+rolls back to the prepared version.

@@ -183,6 +183,9 @@ if grep -Eq 'Warning|Fix\?|Clear\?' "$work/fsck-final.txt"; then
 fi
 losetup -d "$loop"
 loop=
+# The finished root filesystem keeps its full 8 GiB-image extent. The new raw
+# slot is appended outside it, with no filesystem mounting or repartitioning.
+python3 "$project/build/preload-layout.py" append-pi "$image" > "$work/offline-layout.json"
 python3 "$project/build/pi-layout.py" "$image" > "$output/$prefix.layout.json"
 gzip -n -1 "$image"
 cp "$image.gz" "$output/"

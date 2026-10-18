@@ -74,10 +74,11 @@ for archive in "${sources[@]}"; do
 done
 cp /src/build/SOURCES.txt /out/SOURCES.txt
 cp /src/LICENSE /out/LICENSE.txt
+python3 /src/scripts/package-autoflash.py "/out/vaultboot-${version}-autoflash.tar.gz" --version "$version"
 printf 'Vaultboot version: %s\nDebian suite: trixie\nArchitecture: amd64\nSOURCE_DATE_EPOCH: %s\nBuild commit: %s\n' \
     "$version" "$SOURCE_DATE_EPOCH" "${BUILD_COMMIT:-unknown}" > /out/BUILD-INFO.txt
 dpkg-query -W live-build debootstrap xorriso >> /out/BUILD-INFO.txt
 printf 'Builder source corrections: GRUB EFI maps to grub2; Built-Using and Static-Built-Using exact sources included (build/patch-live-build.py).\n' >> /out/BUILD-INFO.txt
 cd /out
-sha256sum -- *.iso *.img.gz *.layout.json *.packages.tsv *.part-* SOURCES.txt BUILD-INFO.txt LICENSE.txt > SHA256SUMS
+sha256sum -- *.iso *.img.gz *-autoflash.tar.gz *.layout.json *.packages.tsv *.part-* SOURCES.txt BUILD-INFO.txt LICENSE.txt > SHA256SUMS
 echo 'Build complete. Boot validation is required before publishing a non-draft release.'

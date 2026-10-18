@@ -14,14 +14,18 @@ notes, application, settings, and network configuration are saved there.
 
 ## First boot and Wi-Fi
 
-Setup offers **Keyboard layout**, **Wi-Fi / Ethernet**, and **Time zone** before
-the first Obsidian download. Choose your keyboard layout before typing a Wi-Fi
+An AUTOFLASH-prepared drive opens Obsidian offline on first boot. Use
+`Ctrl+Alt+S` whenever you want to connect Wi-Fi or change system settings.
+On unprepared media, setup offers **Keyboard layout**, **Wi-Fi / Ethernet**,
+and **Time zone** before the first Obsidian download. Choose your keyboard
+layout before typing a Wi-Fi
 password. The same controls remain available through `Ctrl+Alt+S`.
 
 Choose **Wi-Fi / Ethernet → Connect to Wi-Fi / Ethernet**. Use the arrow keys to
 select your network, `Tab` to move between controls, and `Enter` to connect.
 Enter the password when asked, then choose **Back**. Close the network status
-message and choose **Download Obsidian** in setup. Ethernet normally connects
+message. If app setup is still pending, choose **Download Obsidian**. Ethernet
+normally connects
 automatically. **Edit saved connections** provides advanced settings, including
 hidden networks and manual addressing.
 
@@ -87,8 +91,9 @@ a partition editor on another Linux system after backing it up. Partition
 editing is an advanced task; the system never automatically reformats or grows
 your disks.
 
-The Pi image occupies 8 GiB, including its firmware partition and writable
-root filesystem. The OS, application, and notes share that space. A larger
+The Pi image includes an 8 GiB firmware/root layout plus a 256 MiB
+offline-preparation partition. The OS, application, and notes share the root
+filesystem. A larger
 microSD does not automatically grow the filesystem in this preview.
 
 Do not have two Vaultboot USBs attached during startup: they share the

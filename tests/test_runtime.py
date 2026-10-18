@@ -4,11 +4,14 @@ import hashlib
 import importlib.util
 import io
 import json
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 import xml.etree.ElementTree as ET
 
@@ -16,7 +19,11 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("vaultboot_runtime", ROOT / "config/includes.chroot/usr/local/lib/vaultboot/runtime.py")
 runtime = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(runtime)
+sys.path.insert(0, str(Path(SPEC.origin).parent))
+try:
+    SPEC.loader.exec_module(runtime)
+finally:
+    sys.path.pop(0)
 
 
 def result(stdout="", code=0):
@@ -36,6 +43,18 @@ class RuntimeTests(unittest.TestCase):
         self.addCleanup(patch.stopall)
         patch.object(runtime.os, "geteuid", return_value=1000).start()
         patch.object(runtime.shutil, "disk_usage", return_value=MagicMock(free=10**12)).start()
+        patch.object(runtime, "PRELOAD_ERROR", self.home / "offline-error.txt").start()
+        patch.object(runtime.preload, "open_cache", side_effect=self.empty_cache).start()
+        patch.object(runtime.urllib.request, "build_opener", side_effect=AssertionError("Unit tests must not access the network")).start()
+
+    @staticmethod
+    @contextmanager
+    def empty_cache(_arch):
+        yield None
+
+    def cached(self):
+        return SimpleNamespace(asset=runtime.select_asset(self.release), stream=io.BytesIO(self.body),
+                               receipt={"terms_accepted": True})
 
     def opener(self, url):
         self.calls.append(url)
@@ -239,6 +258,101 @@ class RuntimeTests(unittest.TestCase):
             self.assertTrue(self.app.setup())
         command.assert_not_called()
         network.assert_not_called()
+        runtime.preload.open_cache.assert_not_called()
+
+    def test_prepared_install_rehashes_local_bytes_and_preserves_atomic_update(self):
+        old = self.old_install()
+        cached = self.cached()
+        with patch.object(runtime, "run", side_effect=self.extract):
+            asset = self.app.install(cached=cached)
+        self.assertEqual(asset["sha256"], self.digest)
+        self.assertEqual(self.app.executable().read_text(), "fake executable")
+        self.assertTrue(old.exists())
+        self.assertFalse(cached.stream.closed)
+        self.assertFalse(list(self.app.releases.glob(".install-*")))
+        self.assertEqual(self.calls, [])
+
+    def test_corrupt_prepared_bytes_keep_existing_app(self):
+        old = self.old_install()
+        cached = self.cached()
+        cached.stream = io.BytesIO(b"X" * len(self.body))
+        with patch.object(runtime, "run") as extract:
+            with self.assertRaisesRegex(runtime.SetupError, "checksum"):
+                self.app.install(cached=cached)
+        extract.assert_not_called()
+        self.assertEqual(self.app.current.resolve(), old)
+        self.assertFalse(list(self.app.releases.glob(".install-*")))
+
+    def test_wrong_architecture_prepared_package_is_rejected(self):
+        cached = self.cached()
+        with patch.object(runtime.platform, "machine", return_value="aarch64"), patch.object(runtime, "run") as extract:
+            with self.assertRaisesRegex(runtime.SetupError, "another computer architecture"):
+                self.app.install(cached=cached)
+        extract.assert_not_called()
+
+    def test_prepared_arm64_tar_uses_safe_normal_user_extraction(self):
+        body = self.make_tar()
+        asset = {"version": "v1.14.4", "architecture": "arm64", "format": "tar",
+                 "name": "obsidian-1.14.4-arm64.tar.gz", "size": len(body),
+                 "sha256": hashlib.sha256(body).hexdigest(), "url": "unused-local-source"}
+        with patch.object(runtime.platform, "machine", return_value="aarch64"), patch.object(runtime, "run") as command:
+            self.app.install(cached=SimpleNamespace(asset=asset, stream=io.BytesIO(body)))
+        command.assert_not_called()
+        self.assertEqual(self.app.executable().read_bytes(), b"fake ARM64 executable")
+
+    def test_accepted_prepared_media_installs_without_setup_prompt_or_network(self):
+        cached = self.cached()
+        progress = MagicMock()
+        progress.poll.return_value = None
+        with patch.object(runtime.preload, "open_cache", return_value=nullcontext(cached)), patch.object(runtime, "run", side_effect=self.extract), patch.object(runtime.subprocess, "Popen", return_value=progress) as process, patch.object(self.app, "choose") as choose:
+            self.assertTrue(self.app.setup())
+        choose.assert_not_called()
+        self.assertTrue(self.app.executable())
+        accepted = json.loads((self.app.state / "prepared-accepted.json").read_text())
+        self.assertEqual(accepted["sha256"], self.digest)
+        self.assertTrue(accepted["terms_accepted"])
+        self.assertIn("No internet connection is needed", " ".join(process.call_args.args[0]))
+        progress.terminate.assert_called_once()
+
+    def test_unaccepted_prepared_media_does_not_install(self):
+        cached = self.cached()
+        cached.receipt = {"terms_accepted": False}
+        with patch.object(runtime.preload, "open_cache", return_value=nullcontext(cached)), patch.object(self.app, "download_ui") as install, patch.object(runtime, "dialog") as prompt:
+            self.assertEqual(self.app.prepared_setup(), "failed")
+        install.assert_not_called()
+        self.assertIn("acceptance", prompt.call_args.args[1])
+        self.assertFalse((self.app.state / "prepared-accepted.json").exists())
+
+    def test_prepared_extraction_failure_records_no_acceptance_and_offers_retry(self):
+        cached = self.cached()
+        with patch.object(runtime.preload, "open_cache", return_value=nullcontext(cached)), patch.object(self.app, "download_ui", return_value=False), patch.object(self.app, "choose", return_value="Power off") as choose, patch.object(self.app, "power", return_value=True):
+            self.assertFalse(self.app.setup())
+        self.assertIn("Retry prepared Obsidian", choose.call_args.args[2])
+        self.assertFalse((self.app.state / "prepared-accepted.json").exists())
+
+    def test_bad_prepared_cache_is_visible_without_automatic_network_fallback(self):
+        with patch.object(runtime.preload, "open_cache", side_effect=runtime.preload.PreloadError("wrong checksum")), patch.object(runtime, "dialog") as prompt, patch.object(self.app, "choose", return_value="Power off"), patch.object(self.app, "power", return_value=True), patch.object(self.app, "download_ui") as install:
+            self.assertFalse(self.app.setup())
+        install.assert_not_called()
+        self.assertIn("wrong checksum", prompt.call_args.args[1])
+
+    def test_boot_preload_failure_is_visible_in_normal_session(self):
+        runtime.PRELOAD_ERROR.write_text("The USB copy failed its checksum.")
+        with patch.object(runtime, "dialog") as prompt:
+            self.assertEqual(self.app.prepared_setup(), "failed")
+        self.assertIn("USB copy failed", prompt.call_args.args[1])
+
+    def test_prepared_retry_can_succeed_without_online_install(self):
+        with patch.object(self.app, "prepared_setup", side_effect=["failed", "installed"]), patch.object(self.app, "choose", return_value="Retry prepared Obsidian"), patch.object(self.app, "download_ui") as online:
+            self.assertTrue(self.app.setup())
+        online.assert_not_called()
+
+    def test_online_update_ignores_prepared_cache(self):
+        self.old_install()
+        with patch.object(runtime, "run", side_effect=self.extract):
+            self.app.install(self.opener)
+        self.assertEqual(self.calls, [runtime.RELEASE_API, self.release["assets"][0]["browser_download_url"]])
+        runtime.preload.open_cache.assert_not_called()
 
     def test_home_partition_is_persistent(self):
         with patch.object(runtime, "run", return_value=result("ext4 rw,relatime\n")):

@@ -9,16 +9,19 @@ This does not relicense Debian packages, firmware, Obsidian, or plugins.
 
 ## Obsidian
 
-The public image does not contain the Obsidian application. First setup asks
-the user to download it directly from `obsidianmd/obsidian-releases` on GitHub,
+The public image does not contain the Obsidian application. AUTOFLASH asks
+the person preparing the drive to accept its terms and downloads their copy
+directly from `obsidianmd/obsidian-releases` on GitHub,
 the upstream linked by [Obsidian's download page](https://obsidian.md/download).
+Unprepared media offers this download during first setup instead.
 Its [terms](https://obsidian.md/terms) and
 [license overview](https://obsidian.md/license) apply to that application.
 The terms do not provide a clear general grant to redistribute its binary
 as part of a third-party distribution; this project does not assume one.
 
-The downloader requires a SHA-256 digest in the upstream GitHub asset metadata
-and verifies the package before extraction. This detects corrupt downloads;
+Online setup requires a SHA-256 digest in the upstream GitHub asset metadata.
+Offline preparation uses the exact version, size, and digest pinned from that
+metadata in the release source. Both paths verify the package before extraction. This detects corrupt downloads;
 it does not protect against compromise of the upstream publisher or GitHub.
 It never executes the Debian package's maintainer scripts as root.
 
@@ -40,3 +43,7 @@ Firmware packages retain their upstream license terms; some contain
 redistributable binary firmware without source.
 
 Review these rules again before each public release; software and terms can change.
+
+Distribute the public release image and preparation tools. A drive or image
+that AUTOFLASH has prepared contains your downloaded Obsidian copy; the project
+does not claim permission to publish that prepared copy as a public download.
