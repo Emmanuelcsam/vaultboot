@@ -357,7 +357,55 @@ class DevicePolicyTests(unittest.TestCase):
 
     def test_mount_table_unescapes_paths_and_keeps_multiple_mounts(self):
         text = "1 0 8:241 / /media/user/My\\040USB rw - vfat /dev/sdz1 rw\n2 0 8:241 / /boot rw - vfat /dev/sdz1 rw\n"
-        self.assertEqual(flash.linux_mounts(text)["8:241"], ["/media/user/My USB", "/boot"])
+        mounts, fuse_devices = flash.linux_mounts(text)
+        self.assertEqual(mounts["8:241"], ["/media/user/My USB", "/boot"])
+        self.assertEqual(fuse_devices, set())
+
+    def test_fuseblk_anonymous_mount_blocks_actual_source_disk(self):
+        self.node["children"][0].update(fstype="ntfs", mountpoints=["/media/user/Source"])
+        info = mock.Mock(st_mode=stat.S_IFBLK, st_rdev=os.makedev(8, 241))
+        for kind in ("fuseblk", "fuse.ntfs-3g"):
+            with self.subTest(kind=kind), mock.patch.object(flash.os, "stat", return_value=info) as inspected:
+                mounts, fuse_devices = flash.linux_mounts(
+                    f"1 0 0:48 / /media/user/Source rw - {kind} /dev/disk/by-uuid/example rw\n")
+            inspected.assert_called_once_with("/dev/disk/by-uuid/example")
+            self.assertEqual(mounts["8:241"], ["/media/user/Source"])
+            # Protecting the source path by its anonymous st_dev alone fails;
+            # the independently resolved backing device must refuse this disk.
+            reason = flash.linux_reason(self.node, {"0:48"}, mounts, self.holders, fuse_devices)
+            self.assertIn("active FUSE", reason)
+
+    def test_unresolvable_fuseblk_refuses_inventory(self):
+        for source in ("none", "/dev/missing", "/dev/not-a-block-device"):
+            with self.subTest(source=source):
+                info = mock.Mock(st_mode=stat.S_IFREG, st_rdev=0)
+                with mock.patch.object(flash.os, "stat", return_value=info):
+                    with self.assertRaisesRegex(flash.Refused, "Cannot identify a mounted FUSE"):
+                        flash.linux_mounts(f"1 0 0:48 / /media/user/Source rw - fuseblk {source} rw\n")
+        with mock.patch.object(flash.os, "stat", side_effect=FileNotFoundError):
+            with self.assertRaises(flash.Refused):
+                flash.linux_mounts("1 0 0:48 / /media/user/Source rw - fuseblk /dev/missing rw\n")
+
+    def test_nonblock_fuse_desktop_mount_does_not_resolve_a_disk(self):
+        with mock.patch.object(flash.os, "stat") as inspected:
+            mounts, fuse_devices = flash.linux_mounts(
+                "1 0 0:48 / /run/user/1000/gvfs rw - fuse.gvfsd-fuse gvfsd-fuse rw\n")
+        inspected.assert_not_called()
+        self.assertEqual(fuse_devices, set())
+        self.assertEqual(mounts["0:48"], ["/run/user/1000/gvfs"])
+
+    def test_lsblk_mountpoints_also_protect_and_require_unmount(self):
+        child = self.node["children"][0]
+        child["mountpoints"] = [None, "/mnt/manual"]
+        self.assertIn("mounted outside", self.reason())
+        child["mountpoints"] = [None, "/media/user/USB"]
+        self.assertEqual(self.reason(), "")
+        self.assertEqual(flash.linux_child_mounts(child, {}), {"/media/user/USB"})
+
+    def test_malformed_mount_table_refuses_inventory(self):
+        for text in ("1 0 8:241 / /media rw - vfat\n", "1 0 unknown / /media rw - vfat /dev/sdz1 rw\n"):
+            with self.assertRaises(flash.Refused):
+                flash.linux_mounts(text)
 
     def test_geometry_generation_and_4kn_refused(self):
         disk = flash.Disk("/dev/fake", 8192, "", "", ("/dev/fake", 0, 0, 0, "123"))

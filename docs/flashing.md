@@ -45,6 +45,9 @@ it never forces a busy filesystem off the computer. Close its files and retry
 if it is busy. Unsupported readers are refused; use another reader or the
 manual flasher instead of weakening these checks.
 
+Normally unmount any NTFS/FUSE block volumes on the selected drive before
+rerunning AUTOFLASH; mounted FUSE block volumes are excluded from selection.
+
 The flasher needs local temporary space for the compressed and uncompressed
 image together (roughly **7 GiB for PC or 11 GiB for Pi** for this preview).
 It checks available space while staging and removes its private temporary

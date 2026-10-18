@@ -271,14 +271,32 @@ def within(path, parent):
 
 
 def linux_mounts(text):
-    mounts = {}
+    mounts, fuse_devices = {}, set()
     for line in text.splitlines():
         fields = line.split()
         if len(fields) < 10 or "-" not in fields:
             raise Refused("Cannot interpret the mount table safely")
+        separator = fields.index("-")
+        if separator < 6 or len(fields) < separator + 4 or not re.fullmatch(r"\d+:\d+", fields[2]):
+            raise Refused("Cannot interpret the mount table safely")
         point = re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), fields[4])
         mounts.setdefault(fields[2], []).append(point)
-    return mounts
+        kind = fields[separator + 1]
+        source = re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), fields[separator + 2])
+        if kind == "fuseblk" or (kind.startswith("fuse.") and source.startswith("/dev/")):
+            # ntfs-3g exposes an anonymous 0:N mount device, not the backing
+            # partition's rdev. Neither st_dev nor mountinfo's third field can
+            # protect that disk. Refuse it while mounted, including under /media.
+            try:
+                info = os.stat(source) if source.startswith("/dev/") else None
+            except OSError as exc:
+                raise Refused("Cannot identify a mounted FUSE block device; unmount it before flashing") from exc
+            if info is None or not stat.S_ISBLK(info.st_mode):
+                raise Refused("Cannot identify a mounted FUSE block device; unmount it before flashing")
+            backing = f"{os.major(info.st_rdev)}:{os.minor(info.st_rdev)}"
+            mounts.setdefault(backing, []).append(point)
+            fuse_devices.add(backing)
+    return mounts, fuse_devices
 
 
 def flatten(node):
@@ -287,7 +305,14 @@ def flatten(node):
         yield from flatten(child)
 
 
-def linux_reason(node, protected, mounts, holders):
+def linux_child_mounts(node, mounts):
+    reported = node.get("mountpoints") or []
+    if not isinstance(reported, list) or any(point is not None and not isinstance(point, str) for point in reported):
+        raise Refused("Cannot interpret block-device mountpoints safely")
+    return set(mounts.get(node.get("maj:min"), [])) | {point for point in reported if point and point != "[SWAP]"}
+
+
+def linux_reason(node, protected, mounts, holders, fuse_devices=()):
     if node.get("type") != "disk":
         return "not a whole disk"
     if node.get("log-sec") != 512:
@@ -298,6 +323,8 @@ def linux_reason(node, protected, mounts, holders):
         return "not removable or USB"
     for child in flatten(node):
         dev = child.get("maj:min")
+        if dev in fuse_devices:
+            return "contains an active FUSE block filesystem; unmount it before flashing"
         if not dev or dev in protected:
             return "contains system, source, staging, or current-directory storage"
         if child.get("type") not in ("disk", "part") or holders.get(dev, True):
@@ -306,7 +333,7 @@ def linux_reason(node, protected, mounts, holders):
             return "complex storage or swap; not eligible for automatic flashing"
         if "[SWAP]" in (child.get("mountpoints") or []):
             return "active swap"
-        for point in mounts.get(dev, []):
+        for point in linux_child_mounts(child, mounts):
             if not any(within(point, prefix) for prefix in ("/media", "/run/media")):
                 return "mounted outside a removable-media directory"
     return ""
@@ -320,7 +347,7 @@ class LinuxDisks:
         run("udevadm", "settle", "--timeout=10")
         tree = json.loads(run("lsblk", "--json", "--bytes", "--paths", "--tree", "--output",
                               "NAME,PATH,TYPE,SIZE,LOG-SEC,RO,RM,TRAN,MODEL,SERIAL,WWN,MAJ:MIN,MOUNTPOINTS,FSTYPE"))["blockdevices"]
-        mounts = linux_mounts(Path("/proc/self/mountinfo").read_text())
+        mounts, fuse_devices = linux_mounts(Path("/proc/self/mountinfo").read_text())
         protected = set()
         for path in self.protected_paths:
             dev = os.stat(path).st_dev
@@ -339,7 +366,7 @@ class LinuxDisks:
             for child in flatten(node):
                 sysdev = Path("/sys/dev/block") / child["maj:min"]
                 holders[child["maj:min"]] = bool(list((sysdev / "holders").iterdir()))
-            reason = linux_reason(node, protected, mounts, holders)
+            reason = linux_reason(node, protected, mounts, holders, fuse_devices)
             ident = device_identity(path)
             if f"{os.major(ident[0])}:{os.minor(ident[0])}" != node["maj:min"]:
                 raise Refused("Device identity changed during enumeration")
@@ -348,7 +375,7 @@ class LinuxDisks:
                 reason = reason or "kernel lacks disk-generation identity (Linux 5.15+ required)"
             identity = (path, *ident, sequence.read_text().strip() if sequence.exists() else "",
                         node.get("serial"), node.get("wwn"), node.get("model"), int(node["size"]))
-            points = tuple(sorted({point for child in flatten(node) for point in mounts.get(child["maj:min"], [])}))
+            points = tuple(sorted({point for child in flatten(node) for point in linux_child_mounts(child, mounts)}))
             disks.append(Disk(path, int(node["size"]), node.get("model") or "Unknown model",
                               node.get("serial") or node.get("wwn") or "No serial", identity, points, reason))
         return disks
