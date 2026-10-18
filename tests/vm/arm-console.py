@@ -14,10 +14,12 @@ import subprocess
 from console import VM, run_console
 
 
-def qemu_arguments(overlay, kernel, initrd, serial_path, qmp_path, offline=False):
+def qemu_arguments(overlay, kernel, initrd, serial_path, qmp_path, offline=False, memory=1024):
+    if memory not in (1024, 2048):
+        raise ValueError("ARM guest memory must be 1024 or 2048 MiB")
     args = [
         "qemu-system-aarch64", "-machine", "virt", "-accel", "tcg,thread=multi",
-        "-cpu", "cortex-a53", "-smp", "2", "-m", "2048",
+        "-cpu", "cortex-a53", "-smp", "2", "-m", str(memory),
         "-kernel", str(kernel), "-initrd", str(initrd),
         "-append", "root=/dev/vda1 rw rootwait console=tty0 console=ttyAMA0,115200",
         "-drive", f"file={overlay},format=qcow2,if=virtio",
@@ -33,7 +35,7 @@ def qemu_arguments(overlay, kernel, initrd, serial_path, qmp_path, offline=False
 
 
 class ARMVM(VM):
-    def __init__(self, image, kernel, initrd, work, offline=False):
+    def __init__(self, image, kernel, initrd, work, offline=False, memory=1024):
         inputs = [Path(value).resolve(strict=True) for value in (image, kernel, initrd)]
         if not all(path.is_file() for path in inputs):
             raise ValueError("Image, kernel and initramfs must be regular files")
@@ -56,7 +58,7 @@ class ARMVM(VM):
             subprocess.run([
                 "qemu-img", "create", "-f", "qcow2", "-F", "raw", "-b", str(image), str(overlay),
             ], check=True)
-        self.start_process(qemu_arguments(overlay, kernel, initrd, self.serial_path, self.qmp_path, offline))
+        self.start_process(qemu_arguments(overlay, kernel, initrd, self.serial_path, self.qmp_path, offline, memory))
 
 
 def main():
@@ -66,10 +68,12 @@ def main():
     parser.add_argument("initrd", type=Path, help="initrd.img extracted from that candidate")
     parser.add_argument("work", type=Path, help="private output/overlay/command queue directory")
     parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--memory", type=int, default=1024, choices=(1024, 2048),
+                        help="guest MiB; 1024 matches Pi 3B/B+ capacity, 2048 is a diagnostic comparison")
     parser.add_argument("--login-timeout", type=int, default=120, choices=range(30, 1801))
     parser.add_argument("--duration", type=int, default=3600, choices=range(60, 10801))
     args = parser.parse_args()
-    vm = ARMVM(args.image, args.kernel, args.initrd, args.work, args.offline)
+    vm = ARMVM(args.image, args.kernel, args.initrd, args.work, args.offline, args.memory)
     run_console(vm, args.work, args.login_timeout, args.duration)
 
 

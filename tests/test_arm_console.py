@@ -42,6 +42,7 @@ class ARMConsoleTests(unittest.TestCase):
             self.assertEqual(args[args.index("-initrd") + 1], str(paths[2]))
             self.assertIn("root=/dev/vda1", args[args.index("-append") + 1])
             self.assertNotIn("-enable-kvm", args)
+            self.assertEqual(args[args.index("-m") + 1], "1024")
             self.assertFalse(any("hostfwd" in value or "tcp:" in value for value in args))
 
     def test_reusing_an_overlay_for_a_different_candidate_is_refused(self):
@@ -60,6 +61,12 @@ class ARMConsoleTests(unittest.TestCase):
         args = arm.qemu_arguments("overlay", "kernel", "initrd", "serial", "qmp", offline=True)
         self.assertNotIn("-netdev", args)
         self.assertEqual(args[-2:], ["-nic", "none"])
+
+    def test_extra_memory_is_an_explicit_diagnostic_override(self):
+        args = arm.qemu_arguments("overlay", "kernel", "initrd", "serial", "qmp", memory=2048)
+        self.assertEqual(args[args.index("-m") + 1], "2048")
+        with self.assertRaisesRegex(ValueError, "memory"):
+            arm.qemu_arguments("overlay", "kernel", "initrd", "serial", "qmp", memory=512)
 
 
 if __name__ == "__main__":
