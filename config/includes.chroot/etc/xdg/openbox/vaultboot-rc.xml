@@ -9,6 +9,10 @@
   <keyboard>
     <keybind key="C-A-s"><action name="Execute"><command>vaultboot menu</command></action></keybind>
     <keybind key="C-A-t"><action name="Execute"><command>xterm -title 'Vaultboot maintenance'</command></action></keybind>
+    <keybind key="C-A-f"><action name="Execute"><command>vaultboot files</command></action></keybind>
+    <keybind key="XF86AudioRaiseVolume"><action name="Execute"><command>wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+</command></action></keybind>
+    <keybind key="XF86AudioLowerVolume"><action name="Execute"><command>wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-</command></action></keybind>
+    <keybind key="XF86AudioMute"><action name="Execute"><command>wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle</command></action></keybind>
     <keybind key="A-F4"><action name="Close"/></keybind>
     <keybind key="A-Tab"><action name="NextWindow"/></keybind>
     <keybind key="A-S-Tab"><action name="PreviousWindow"/></keybind>

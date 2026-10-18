@@ -1,0 +1,3 @@
+#!/bin/sh
+# Isolate every target/chroot mount from live services and other installers.
+exec /usr/bin/unshare --mount --propagation private -- /usr/bin/python3 /usr/local/lib/vaultboot/install.py "$@"

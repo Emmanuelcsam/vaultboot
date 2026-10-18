@@ -104,7 +104,7 @@ EOF
 chroot "$root" env DEBIAN_FRONTEND=noninteractive apt-get update
 # Reuse the appliance packages, omitting the amd64 kernel, PC firmware and live overlay.
 mapfile -t packages < <(sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$project/config/package-lists/vaultboot.list.chroot" |
-    grep -Ev '^(linux-image-amd64|live-.*|user-setup|intel-microcode|amd64-microcode|firmware-(amd-graphics|intel-graphics|iwlwifi|atheros|realtek))$')
+    grep -Ev '^(linux-image-amd64|live-.*|user-setup|intel-microcode|amd64-microcode|grub-.*|grub2-common|firmware-(amd-graphics|intel-graphics|iwlwifi|atheros|realtek))$')
 chroot "$root" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
 # A preconfigured local appliance does not need provisioning or a remote shell.
 mapfile -t unwanted < <(chroot "$root" dpkg-query -W '-f=${db:Status-Abbrev} ${binary:Package}\n' |

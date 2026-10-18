@@ -350,6 +350,135 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(prompt.call_args.args[0], "error")
         self.assertFalse(list(self.app.notes.glob("*.tar.gz")))
 
+    def test_failed_network_service_is_visible_and_connection_editor_can_fail_safely(self):
+        with patch.object(runtime, "probe", return_value=result(code=1)), patch.object(self.app, "choose", return_value="Connect to Wi-Fi / Ethernet"), patch.object(runtime, "run", return_value=result(code=1)) as command, patch.object(runtime, "dialog") as prompt:
+            self.assertIn("unavailable", self.app.network_summary())
+            self.app.network()
+        self.assertEqual(command.call_args.args[0][-1], "nmtui-connect")
+        self.assertTrue(any(call.args[0] == "error" for call in prompt.call_args_list))
+        self.assertIn("works offline", prompt.call_args.args[1])
+
+    def test_setup_network_and_keyboard_return_to_download(self):
+        with patch.object(self.app, "executable", return_value=None), patch.object(self.app, "choose", side_effect=["Wi-Fi / Ethernet", "Keyboard layout", "Download Obsidian"]), patch.object(self.app, "network") as network, patch.object(self.app, "keyboard") as keyboard, patch.object(self.app, "download_ui", return_value=True):
+            self.assertTrue(self.app.setup())
+        network.assert_called_once()
+        keyboard.assert_called_once()
+
+    def test_display_parser_excludes_disconnected_ports_and_marks_current_mode(self):
+        output = "Screen 0: minimum 8 x 8\neDP-1 connected primary 1920x1080+0+0\n   1920x1080 60.00*+ 59.90\n   1280x720 60.00\nHDMI-1 disconnected\nDP-1 connected\n   1024x768 60.00+\n"
+        displays = runtime.display_outputs(output)
+        self.assertEqual(displays["eDP-1"], {"modes": ["1920x1080", "1280x720"], "current": "1920x1080"})
+        self.assertIsNone(displays["DP-1"]["current"])
+        self.assertNotIn("HDMI-1", displays)
+
+    def test_display_timeout_restores_old_mode_without_saving_bad_setting(self):
+        modes = "eDP-1 connected 1920x1080+0+0\n   1920x1080 60*+\n   1280x720 60\n"
+        with patch.object(runtime, "probe", side_effect=[result(modes), result()]) as command, patch.object(self.app, "choose", side_effect=["eDP-1", "1280x720"]), patch.object(self.app, "checked", return_value=True), patch.object(runtime, "dialog", return_value=result(code=5)):
+            self.app.display()
+        self.assertEqual(command.call_args.args[0], ["xrandr", "--output", "eDP-1", "--mode", "1920x1080"])
+        self.assertNotIn("display", self.app.settings())
+
+    def test_display_confirmed_mode_is_saved_but_failed_apply_is_not(self):
+        modes = "eDP-1 connected 1920x1080+0+0\n   1920x1080 60*+\n   1280x720 60\n"
+        with patch.object(runtime, "probe", return_value=result(modes)), patch.object(self.app, "choose", side_effect=["eDP-1", "1280x720"]), patch.object(self.app, "checked", return_value=True), patch.object(runtime, "dialog", return_value=result()):
+            self.app.display()
+        self.assertEqual(self.app.settings()["display"], {"output": "eDP-1", "mode": "1280x720"})
+        with patch.object(runtime, "probe", return_value=result(modes)), patch.object(self.app, "choose", side_effect=["eDP-1", "1280x720"]), patch.object(self.app, "checked", return_value=False), patch.object(runtime, "dialog") as prompt:
+            self.app.display()
+        prompt.assert_not_called()
+
+    def test_display_restore_failure_explains_manual_recovery(self):
+        modes = "eDP-1 connected 1920x1080+0+0\n   1920x1080 60*+\n   1280x720 60\n"
+        with patch.object(runtime, "probe", side_effect=[result(modes), result(code=1)]), patch.object(self.app, "choose", side_effect=["eDP-1", "1280x720"]), patch.object(self.app, "checked", return_value=True), patch.object(runtime, "dialog", return_value=result(code=5)) as prompt:
+            self.app.display()
+        self.assertEqual(prompt.call_args.args[0], "error")
+        self.assertIn("xrandr --auto", prompt.call_args.args[1])
+
+    def test_saved_keyboard_and_brightness_apply_but_missing_display_is_skipped(self):
+        self.app.save_setting("keyboard", {"layout": "gb", "variant": ""})
+        self.app.save_setting("display", {"output": "old-monitor", "mode": "1920x1080"})
+        self.app.save_setting("brightness", 65)
+        with patch.object(runtime, "probe", return_value=result("eDP-1 connected\n   1024x768 60*\n")) as command:
+            self.app.apply_settings()
+        calls = [call.args[0] for call in command.call_args_list]
+        self.assertIn(["setxkbmap", "-layout", "gb", "-variant", ""], calls)
+        self.assertIn(["brightnessctl", "-c", "backlight", "set", "65%"], calls)
+        self.assertFalse(any("old-monitor" in call for call in calls))
+
+    def test_malformed_saved_settings_do_not_launch_invalid_commands(self):
+        for settings in ([], {"keyboard": {"layout": ["gb"]}, "display": [], "brightness": -1}, {"keyboard": {"layout": "--help"}, "brightness": "20%"}):
+            (self.app.data / "settings.json").write_text(json.dumps(settings))
+            with patch.object(runtime, "probe") as command:
+                self.app.apply_settings()
+            command.assert_not_called()
+
+    def test_keyboard_variant_is_applied_and_saved_without_changing_host_console(self):
+        rules = self.home / "keyboard.xml"
+        rules.write_text('<xkbConfigRegistry><layoutList><layout><configItem><name>us</name><description>English (US)</description></configItem><variantList><variant><configItem><name>intl</name><description>International</description></configItem></variant></variantList></layout></layoutList></xkbConfigRegistry>')
+        with patch.object(runtime, "KEYBOARD_RULES", rules), patch.object(self.app, "choose", side_effect=["English (US) (us)", "International"]), patch.object(self.app, "checked", return_value=True) as command, patch.object(runtime, "dialog"):
+            self.app.keyboard()
+        self.assertEqual(command.call_args.args[0], ["setxkbmap", "-layout", "us", "-variant", "intl"])
+        self.assertEqual(self.app.settings()["keyboard"], {"layout": "us", "variant": "intl"})
+
+    def test_missing_backlight_is_explained_without_trying_to_set_it(self):
+        with patch.object(runtime, "probe", return_value=result(code=1)) as command, patch.object(runtime, "dialog") as prompt:
+            self.app.brightness()
+        command.assert_called_once()
+        self.assertIn("physical brightness buttons", prompt.call_args.args[1])
+
+    def test_brightness_keeps_a_visible_minimum_and_saves_success_only(self):
+        with patch.object(runtime, "probe", return_value=result("intel_backlight,backlight,500,50%,1000\n")), patch.object(runtime, "dialog", return_value=result("5")), patch.object(self.app, "checked", return_value=True) as command:
+            self.app.brightness()
+        self.assertEqual(self.app.settings()["brightness"], 5)
+        self.assertEqual(command.call_args.args[0][-1], "5%")
+        with patch.object(runtime, "probe", return_value=result("intel_backlight,backlight,500,50%,1000\n")), patch.object(runtime, "dialog", return_value=result("0")), patch.object(self.app, "checked") as command:
+            self.app.brightness()
+        command.assert_not_called()
+
+    def test_battery_status_reads_guest_sysfs_and_tolerates_missing_devices(self):
+        sysfs = self.home / "power_supply"
+        battery = sysfs / "BAT0"
+        battery.mkdir(parents=True)
+        for name, content in {"type": "Battery", "capacity": "73", "status": "Discharging"}.items():
+            (battery / name).write_text(content)
+        with patch.object(runtime, "POWER_SUPPLIES", sysfs):
+            self.assertIn("73% (Discharging)", runtime.battery_status())
+        with patch.object(runtime, "POWER_SUPPLIES", self.home / "missing"):
+            self.assertIn("not reported", runtime.battery_status())
+
+    def test_installer_requires_amd64_live_media_and_delegates_confirmation(self):
+        image = self.home / "filesystem.squashfs"
+        image.touch()
+        with patch.object(runtime, "LIVE_SYSTEM", image), patch.object(runtime.platform, "machine", return_value="aarch64"), patch.object(runtime, "dialog"), patch.object(self.app, "launch") as launch:
+            self.app.install_disk()
+            launch.assert_not_called()
+        with patch.object(runtime, "LIVE_SYSTEM", self.home / "absent"), patch.object(runtime.platform, "machine", return_value="x86_64"):
+            self.assertFalse(self.app.can_install())
+        with patch.object(runtime, "LIVE_SYSTEM", image), patch.object(runtime.platform, "machine", return_value="x86_64"), patch.object(self.app, "launch") as launch:
+            self.app.install_disk()
+        self.assertEqual(launch.call_args.args[0][-3:], ["-e", "sudo", "/usr/local/sbin/vaultboot-install"])
+
+    def test_cancelled_suspend_and_package_updates_run_nothing(self):
+        with patch.object(runtime, "dialog", return_value=result(code=1)), patch.object(runtime, "run") as command, patch.object(self.app, "launch") as launch:
+            self.assertFalse(self.app.power("suspend"))
+            self.app.system_updates()
+        command.assert_not_called()
+        launch.assert_not_called()
+
+    def test_suspend_denial_is_visible_and_timezone_command_is_scoped(self):
+        with patch.object(runtime, "dialog", return_value=result()) as prompt, patch.object(runtime, "run", return_value=result(code=1)):
+            self.assertFalse(self.app.power("suspend"))
+        self.assertEqual(prompt.call_args.args[0], "error")
+        with patch.object(runtime, "probe", side_effect=[result("America/New_York\nUTC\n"), result("UTC\n")]), patch.object(self.app, "choose", return_value="America/New_York"), patch.object(self.app, "checked", return_value=True) as command, patch.object(runtime, "dialog"):
+            self.app.timezone()
+        self.assertEqual(command.call_args.args[0], ["timedatectl", "--no-ask-password", "set-timezone", "America/New_York"])
+
+    def test_probe_timeout_is_a_visible_failure_not_a_menu_crash(self):
+        with patch.object(runtime, "run", side_effect=subprocess.TimeoutExpired("nmcli", 12)):
+            failure = runtime.probe(["nmcli"])
+        self.assertNotEqual(failure.returncode, 0)
+        self.assertIn("TimeoutExpired", failure.stderr)
+
     def test_openbox_config_exposes_recovery_shortcuts(self):
         root = ET.parse(ROOT / "config/includes.chroot/etc/xdg/openbox/vaultboot-rc.xml")
         namespace = {"ob": "http://openbox.org/3.4/rc"}

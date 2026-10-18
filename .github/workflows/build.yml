@@ -30,8 +30,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xorriso isolinux e2fsprogs
       - name: Check shell syntax
         run: |
-          bash -n scripts/build.sh build/build-in-container.sh
+          bash -n scripts/build.sh build/build-in-container.sh build/pi.sh
+          sh -n autoflash.sh
           sh -n config/hooks/live/0100-vaultboot.hook.chroot
+          sh -n config/hooks/live/0950-install-source.hook.binary
       - name: Test runtime and disk-image safety
         run: python3 -m unittest discover -s tests -p 'test_*.py' -v
       - name: Detect an already prepared release
@@ -88,7 +90,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > "$RUNNER_TEMP/release-notes.txt" <<'EOF'
-          This draft is not a tested public release. Before publishing, record BIOS and UEFI boots, persistence after reboot, Wi-Fi, and successful first-run Obsidian installation and launch.
+          This draft is not a tested public release. Before publishing, record BIOS and UEFI live and installed boots, autoflash read-back, persistence after reboot, networking checks, and successful first-run Obsidian setup and launch. Distinguish emulated networking from physical Wi-Fi tests.
 
           Flash the extracted .img from the .img.gz download for 4 GiB of persistent storage. The .iso is an ephemeral live session unless a separate persistence volume is provided. Obsidian downloads from its publisher on first run; it is not redistributed in these images. Secure Boot is not supported.
 

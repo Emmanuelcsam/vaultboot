@@ -1,0 +1,5 @@
+#!/bin/sh
+# The offline installer verifies the entire compressed base before erasing a disk.
+set -eu
+test -s live/filesystem.squashfs
+sha256sum live/filesystem.squashfs > vaultboot-squashfs.sha256

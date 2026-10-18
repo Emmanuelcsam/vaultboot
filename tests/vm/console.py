@@ -20,7 +20,7 @@ import uuid
 class VM:
     login_password = "live"
 
-    def __init__(self, image, work, firmware="bios", offline=False, memory=2048, share=None, data_disk=None):
+    def __init__(self, image, work, firmware="bios", offline=False, memory=2048, share=None, data_disk=None, usb_disk=None):
         self.work = Path(work).resolve()
         self.work.mkdir(parents=True, exist_ok=True)
         image = Path(image).resolve()
@@ -40,9 +40,17 @@ class VM:
             args += ["-virtfs", f"local,path={directory},mount_tag=vaultboot,security_model=none"]
         if data_disk:
             disk = Path(data_disk)
-            if disk.is_symlink() or not disk.is_file():
+            if disk.is_symlink() or not disk.is_file() or disk.resolve() == image:
                 raise ValueError("Data disk must be a regular file")
             args += ["-drive", f"file={disk.resolve()},format=raw,if=virtio"]
+        if usb_disk:
+            disk = Path(usb_disk)
+            if (disk.is_symlink() or not disk.is_file() or disk.resolve() == image
+                    or (data_disk and disk.resolve() == Path(data_disk).resolve())):
+                raise ValueError("USB test disk must be a regular file")
+            args += ["-device", "qemu-xhci,id=xhci",
+                     "-drive", f"file={disk.resolve()},format=raw,if=none,id=flash",
+                     "-device", "usb-storage,drive=flash,removable=on,serial=VAULTBOOT_TEST_USB"]
         args += ["-nic", "none"] if offline else ["-netdev", "user,id=net0", "-device", "virtio-net-pci,netdev=net0,id=nic0"]
         if firmware == "uefi":
             code = next(Path("/usr/share/OVMF").glob("OVMF_CODE_4M.fd"))
@@ -239,10 +247,11 @@ def main():
     parser.add_argument("--memory", type=int, default=2048, choices=range(1024, 8193))
     parser.add_argument("--share", type=Path)
     parser.add_argument("--data-disk", type=Path)
+    parser.add_argument("--usb-disk", type=Path)
     args = parser.parse_args()
     work = Path(args.work).resolve()
     work.mkdir(parents=True, exist_ok=True)
-    vm = VM(args.image, work, args.firmware, args.offline, args.memory, args.share, args.data_disk)
+    vm = VM(args.image, work, args.firmware, args.offline, args.memory, args.share, args.data_disk, args.usb_disk)
     run_console(vm, work)
 
 

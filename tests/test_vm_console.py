@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import socket
 import threading
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -17,6 +18,32 @@ SPEC.loader.exec_module(console)
 
 
 class ConsoleTests(unittest.TestCase):
+    def test_usb_write_target_cannot_be_source_or_symlink(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source.img"
+            source.write_bytes(b"source must remain intact")
+            link = root / "link.img"
+            link.symlink_to(source)
+            with patch.object(console.subprocess, "run"), patch.object(console.VM, "start_process") as start:
+                for target in (source, link):
+                    with self.subTest(target=target), self.assertRaises(ValueError):
+                        console.VM(source, root / "vm", usb_disk=target)
+                start.assert_not_called()
+            self.assertEqual(source.read_bytes(), b"source must remain intact")
+
+    def test_usb_test_target_appears_as_removable_device(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, target = root / "source.img", root / "usb.img"
+            source.touch()
+            target.touch()
+            with patch.object(console.subprocess, "run"), patch.object(console.VM, "start_process") as start:
+                console.VM(source, root / "vm", usb_disk=target)
+            args = start.call_args.args[0]
+            self.assertIn("usb-storage,drive=flash,removable=on,serial=VAULTBOOT_TEST_USB", args)
+            self.assertIn(f"file={target},format=raw,if=none,id=flash", args)
+
     def vm(self):
         vm = console.VM.__new__(console.VM)
         vm.buffer = b""

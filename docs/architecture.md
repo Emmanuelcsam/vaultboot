@@ -30,6 +30,18 @@ image's filesystem overlay; `config/package-lists/` specifies Debian packages.
 Unit tests isolate downloads and home directories. Actual image boot checks
 must also cover BIOS, UEFI, application launch, and persistence across reboot.
 
+The PC disk installer runs from the live USB and extracts its immutable system
+image to a new ext4 root on an explicitly selected whole disk. It creates EFI
+and BIOS boot partitions and installs both GRUB targets. The resulting computer
+boots an ordinary writable Debian root, without the USB or the live overlay.
+The source USB and in-use disks are excluded. Installation starts a fresh local
+account; it does not silently copy personal vaults, passwords, or Wi-Fi profiles.
+Pi cards already use an ordinary writable root and do not use this PC installer.
+
+The host-side autoflasher downloads and validates compressed images before
+writing, identifies eligible removable media, requires explicit erase consent,
+and checks the written image. It does not install onto the host's system disk.
+
 Builders use stable Debian package repositories at build time. The release
 manifest records installed versions and matching sources accompany binaries.
 Rebuilds against changing mirrors are not claimed to be bit-for-bit reproducible.

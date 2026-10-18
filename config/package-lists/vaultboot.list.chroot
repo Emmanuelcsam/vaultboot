@@ -15,6 +15,9 @@ rsync
 uuid-runtime
 systemd-sysv
 systemd-timesyncd
+udev
+passwd
+initramfs-tools
 dbus-x11
 dbus-user-session
 libpam-systemd
@@ -30,6 +33,7 @@ xserver-xorg-input-libinput
 xserver-xorg-video-all
 xinit
 x11-xserver-utils
+x11-xkb-utils
 x11-utils
 openbox
 lightdm
@@ -47,14 +51,26 @@ polkitd
 pkexec
 udisks2
 gvfs
+pcmanfm
+ntfs-3g
 pipewire-audio
 wireplumber
 alsa-utils
+pavucontrol
+brightnessctl
 zram-tools
 e2fsprogs
 util-linux
 less
 nano
+# Offline PC installer. The Pi builder omits these PC bootloader packages.
+grub-common
+grub2-common
+grub-pc-bin
+grub-efi-amd64-bin
+parted
+dosfstools
+squashfs-tools
 # Electron and Obsidian runtime, including audio and software GPU fallback.
 libgtk-3-0t64
 libnotify4

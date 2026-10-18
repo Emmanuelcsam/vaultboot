@@ -9,7 +9,7 @@ Debian handles the hardware, networking, sound, and storage underneath.
 This is an independent community project, not an official Obsidian product.
 Obsidian itself is downloaded from its official releases during first setup;
 it is not redistributed in our images. After setup, your app, settings, and
-notes stay on the USB drive or microSD card and work offline.
+notes stay on the USB drive, microSD card, or installed computer and work offline.
 
 ![Obsidian running in Vaultboot](docs/assets/obsidian-preview.png)
 
@@ -20,14 +20,32 @@ tested. Compatibility with your particular PC is not guaranteed.
 
 ## Download and boot
 
+### Automatic USB flashing
+
+On Linux or macOS with Python 3 installed, download this repository and run:
+
+```sh
+git clone https://github.com/Emmanuelcsam/vaultboot.git
+cd vaultboot
+./autoflash.sh
+```
+
+The guided flasher downloads a release, verifies its checksum, shows eligible
+USB drives, asks you to confirm the exact drive to erase, writes it, and verifies
+the written bytes. Choose the **target computer's** architecture: Intel/AMD PC
+or Raspberry Pi 3. The computer creating the USB does not need the same architecture.
+See [flashing instructions](docs/flashing.md) for prerequisites, options, and Windows.
+
+### Manual download
+
 Choose the image for your device:
 
 | Device | Download | Storage |
 | --- | --- | --- |
-| 64-bit Intel/AMD PC | [PC USB image](https://github.com/Emmanuelcsam/vaultboot/releases/download/v0.1.0-preview.1/vaultboot-0.1.0-preview.1-amd64.img.gz) | 8 GB or larger USB |
-| Raspberry Pi 3B / 3B+ | [Experimental Pi image](https://github.com/Emmanuelcsam/vaultboot/releases/download/v0.1.0-preview.1/vaultboot-0.1.0-preview.1-pi3-arm64.img.gz) | 16 GB or larger microSD |
+| 64-bit Intel/AMD PC | [PC USB image](https://github.com/Emmanuelcsam/vaultboot/releases/download/v0.1.0-preview.2/vaultboot-0.1.0-preview.2-amd64.img.gz) | 8 GB or larger USB |
+| Raspberry Pi 3B / 3B+ | [Experimental Pi image](https://github.com/Emmanuelcsam/vaultboot/releases/download/v0.1.0-preview.2/vaultboot-0.1.0-preview.2-pi3-arm64.img.gz) | 16 GB or larger microSD |
 
-Get `SHA256SUMS` and the test report from the [release page](https://github.com/Emmanuelcsam/vaultboot/releases/tag/v0.1.0-preview.1).
+Get `SHA256SUMS` and the test report from the [release page](https://github.com/Emmanuelcsam/vaultboot/releases/tag/v0.1.0-preview.2).
 Physical hardware has not been validated. The Pi image is experimental.
 
 These steps are for the **Intel/AMD PC image**. Raspberry Pi needs a separate
@@ -54,6 +72,19 @@ without installing to or erasing the PC's internal drive. Leave the USB plugged
 in while using it. Use the system menu to shut down before removing it.
 If Windows or macOS offers to format or initialize the USB after flashing,
 cancel: its Linux storage is intentional.
+
+### Install onto a PC
+
+Boot the USB on the destination PC first. Press **Ctrl+Alt+S**, choose
+**Install to internal drive**, and follow the drive-selection prompts.
+Installation erases the entire selected drive, including its existing operating
+system. The installer creates a fresh Debian installation that can boot on its
+own after you shut down and remove the USB. It works offline from the USB;
+first Obsidian setup still needs internet.
+
+Your USB's notes are kept on the USB and are not automatically copied to the new
+installation. Back them up and restore them when ready. The PC installer is
+separate from the Pi's microSD flashing process. See [installation instructions](docs/installing.md).
 
 The preview starts with a US English keyboard layout. For another layout,
 follow [first-run settings](docs/maintenance.md#first-run-settings) before
@@ -100,12 +131,19 @@ your old operating system is claimed.
 
 | Shortcut | Action |
 | --- | --- |
-| `Ctrl+Alt+S` | System menu: network, update, help, shutdown/restart |
+| `Ctrl+Alt+S` | Wi-Fi, files/drives, sound, display, keyboard, time zone, backups, updates, installation, and power |
 | `Ctrl+Alt+T` | Maintenance terminal |
+| `Ctrl+Alt+F` | Files and attached drives |
 
 Your default vault is `~/Notes`. Plugins and themes work through Obsidian as
 usual; none are preinstalled. The system reopens Obsidian if it exits, with
 failure recovery rather than an endless fast restart loop.
+
+To connect Wi-Fi, choose **Wi-Fi / Ethernet** in the system menu (or the network
+option during first setup), select the network, and enter its password. Use
+arrow keys, Tab, and Enter in the connection screen. Saved connections reconnect
+automatically and survive reboot on persistent media. Ethernet normally connects
+automatically. Common Wi-Fi firmware is included; hardware-specific support varies.
 
 There is intentionally no browser. Web links, browser-only login flows, and
 plugins requiring external applications may not work. Obsidian Sync is optional
@@ -138,7 +176,7 @@ or remote server dependency after setup.
 ```sh
 python3 -m unittest discover -s tests -v
 # Linux x86-64 host with Docker, enough disk space, and permission to use Docker:
-VAULTBOOT_VERSION=0.1.0-preview.1 ./scripts/build.sh ./artifacts
+VAULTBOOT_VERSION=0.1.0-preview.2 ./scripts/build.sh ./artifacts
 ```
 
 Building uses a privileged Docker container to construct a Debian chroot.

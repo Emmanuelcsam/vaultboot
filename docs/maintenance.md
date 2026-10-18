@@ -12,33 +12,68 @@ The separate `pi3-arm64.img.gz` uses an ordinary writable ext4 root filesystem
 on microSD. It does not use the PC live overlay or its persistence label. Its
 notes, application, settings, and network configuration are saved there.
 
-## First-run settings
+## First boot and Wi-Fi
 
-The preview starts with a US English keyboard layout. If your keyboard uses
-another layout, press `Ctrl+Alt+T` and set it before entering a Wi-Fi password.
-For example, this selects a UK layout for the current graphical session:
+Setup offers **Keyboard layout**, **Wi-Fi / Ethernet**, and **Time zone** before
+the first Obsidian download. Choose your keyboard layout before typing a Wi-Fi
+password. The same controls remain available through `Ctrl+Alt+S`.
 
-```sh
-setxkbmap gb
-```
+Choose **Wi-Fi / Ethernet → Connect to Wi-Fi / Ethernet**. Use the arrow keys to
+select your network, `Tab` to move between controls, and `Enter` to connect.
+Enter the password when asked, then choose **Back**. Close the network status
+message and choose **Download Obsidian** in setup. Ethernet normally connects
+automatically. **Edit saved connections** provides advanced settings, including
+hidden networks and manual addressing.
 
-Use your layout code in place of `gb`, such as `de`, `fr`, or `es`. To configure
-the saved default, run `sudo dpkg-reconfigure keyboard-configuration`, choose
-your keyboard/layout, then restart through the system menu. The saved setting
-requires persistent storage. Set your time zone with `sudo dpkg-reconfigure tzdata`
-if the default UTC time is unsuitable.
+NetworkManager saves connection profiles and normally reconnects on later
+boots. Saving requires persistent storage. **Turn Wi-Fi on** can re-enable a
+disabled radio; a physical airplane-mode switch must also be enabled. The
+network window reports detected adapters and connection state. A connected
+adapter does not prove the internet is reachable: if the download fails, fix
+the connection and retry. An already installed Obsidian starts offline.
 
-For Wi-Fi, choose **Connect Wi-Fi / network** in setup, then **Activate a
-connection**. Use arrow keys to select your network, `Tab` to move between
-controls, and `Enter` to activate it. Enter the Wi-Fi password, then use `Back`
-and `Quit` to return to setup and choose **Download Obsidian**. A network that
-requires signing in through a web page needs another connection for setup,
-because this image has no browser. A wired Ethernet connection is simplest
-when an old Wi-Fi adapter is unsupported.
+A network requiring a web sign-in page needs a browser, which this image does
+not include. Use home Wi-Fi, wired Ethernet, or a phone hotspot for setup.
+Firmware for common adapters is included, but driver support depends on the
+actual hardware. A missing Wi-Fi device may need a supported USB adapter or
+Ethernet. VM networking checks do not certify a physical laptop's radio.
+
+The network interface is NetworkManager's [nmtui connection list](https://networkmanager.pages.freedesktop.org/NetworkManager/NetworkManager/nmtui.html).
+
+## Everyday controls
+
+Press **Ctrl+Alt+S** for the system menu. It scrolls on smaller displays.
+
+| Control | What it does |
+| --- | --- |
+| Files and attached drives | Opens the Notes folder in PCManFM. Attached USB drives appear in its sidebar; click one to mount it. Use its eject/unmount control before unplugging a data drive. Ctrl+Alt+F is the direct shortcut. |
+| Sound / headphones | Opens volume, output-device, headphone-port and microphone controls. Standard mute/volume keys also control the default output. ALSA's mixer is the fallback if the graphical sound tool is unavailable. |
+| Display resolution | Lists connected monitors and their supported modes. Keep the chosen mode within 15 seconds or it reverts. A confirmed mode is saved and reused only when the matching output still offers it. |
+| Screen brightness | Adjusts a supported laptop backlight, with a minimum of 5%. External monitors usually require their physical buttons. |
+| Keyboard layout | Selects a layout and variant for the graphical session, and saves it for later boots. |
+| Time zone | Selects a Region/City timezone. Network time synchronization is enabled by the image when internet access is available. |
+| Storage / battery / status | Shows writable free space, persistent/temporary storage, battery or external power when reported, network devices, app version and log locations. |
+| Backup Notes vault | Saves a compressed backup of the default Notes vault, including hidden settings, to a folder you choose. Mount the destination drive in Files first. |
+| Suspend | Asks you to save before sleeping. Keep the boot USB connected. Resume support depends on the computer and its firmware. |
+| Restart computer / Shut down | Confirms the action before stopping the session. |
+
+Display, brightness and keyboard preferences live in
+`~/.local/share/vaultboot/settings.json`; they survive reboot on persistent
+storage. If a graphics preference causes trouble, remove its `display` entry
+from that file in a maintenance terminal, then restart. `xrandr --auto` asks the
+driver for its preferred current resolution. Multiple-monitor positioning is
+an advanced `xrandr` task; the menu changes resolution only.
+
+The keyboard menu controls the graphical session. For text-console layouts,
+use `sudo dpkg-reconfigure keyboard-configuration`. Unsupported battery,
+backlight or suspend hardware is reported without preventing note-taking.
+These controls use Debian's existing device services; no desktop suite or
+browser is installed. File management and removable-media support come from
+[PCManFM](https://packages.debian.org/trixie/pcmanfm) and GVFS/udisks2.
 
 ## Available space
 
-Check free space in a maintenance terminal:
+Choose **Storage / battery / status**, or check free space in a maintenance terminal:
 
 ```sh
 df -h / /home/writer
@@ -72,17 +107,22 @@ download leaves the existing app available. Obsidian can also download its own
 application updates; occasionally a newer Electron runtime requires updating
 the installer through the system menu.
 
-Debian package updates are available from the maintenance terminal:
+Choose **Update Debian packages** in the system menu to open a terminal that
+refreshes package lists and asks you to review the proposed upgrades. It does
+not accept package changes automatically. The equivalent maintenance commands
+are:
 
 ```sh
 sudo apt update
 sudo apt upgrade
 ```
 
-Review proposed package changes and available storage. On PCs the boot kernel/initrd
-live in the read-only image: a package upgrade does **not** replace those boot
-files. For kernel fixes or a new Vaultboot base, back up your data, flash the new
-release, and restore your vaults. Pi boot files are writable, but kernel/firmware
+Review proposed package changes and available storage. On the PC live USB the
+boot kernel/initrd live in the read-only image: a package upgrade does **not**
+replace those boot files. For kernel fixes or a new Vaultboot live base, back up
+your data, flash the new release, and restore your vaults. An internal-drive
+installation has a normal writable root and `/boot`; Debian package upgrades
+can update its boot kernel normally. Pi boot files are writable, but kernel/firmware
 upgrades need hardware testing; backing up and reflashing is the supported
 preview base-update procedure for both images. No seamless base-image upgrade
 is claimed.
@@ -103,11 +143,32 @@ review them before posting publicly. If Obsidian stops working after enabling a
 plugin, move the affected vault's `.obsidian/plugins` directory aside with
 Obsidian closed, then restart it. Keep the directory as a backup.
 
-## Using an internal disk
+## Installing on an internal drive
 
-The same raw image can be written to an internal disk from another booted
-operating system, making the PC boot Vaultboot without the USB. **This replaces
-the selected disk's existing operating system and data.** There is no automatic
-internal-disk installer in this preview. First confirm the USB works with your
-hardware, make backups, and use an image writer that clearly identifies the
-target disk. Do not write over the disk from which you are currently running.
+Boot the PC Vaultboot USB, confirm that its display and network work, and make
+backups of the computer's existing files. Choose **Install to internal drive**
+in setup or the system menu. The installer opens in a terminal, identifies
+eligible drives, and requires a typed confirmation identifying the selected
+disk before erasing it. **The selected drive's existing operating system,
+partitions and files are replaced.** This is a whole-drive installation, not a
+dual-boot setup.
+
+The destination must be an unused, writable whole drive of at least 16 GiB.
+The installer creates a GPT layout with a small BIOS boot partition, a 512 MiB
+EFI system partition, and an ext4 root filesystem using the remaining space.
+It configures BIOS and 64-bit UEFI boot without changing the machine's UEFI
+boot entries. Encryption and 32-bit UEFI are not supported by this installer.
+
+Installation creates a **fresh system** from the release image. It does not
+copy the live session's notes, downloaded Obsidian app, settings, or saved Wi-Fi
+profiles. Keep their backups on another drive. On the first internal-drive
+boot, connect to the network, download Obsidian again, then restore your vaults
+through Files. The installed system uses ordinary writable storage rather than
+the USB's persistence overlay.
+
+The menu entry appears only on a 64-bit Intel/AMD PC booted from Vaultboot live
+media. It is absent on the Raspberry Pi and on an installed system without the
+live installation files. The installer itself performs the safety checks; the
+menu does not format disks. Read the terminal's result before closing it. Shut
+down after installation, remove the installer USB, and boot the internal drive.
+The separate Raspberry Pi image is flashed to microSD instead.

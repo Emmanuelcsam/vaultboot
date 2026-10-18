@@ -73,10 +73,11 @@ for archive in "${sources[@]}"; do
         "$archive" "/out/${prefix}-${archive#vaultboot-}.part-"
 done
 cp /src/build/SOURCES.txt /out/SOURCES.txt
+cp /src/LICENSE /out/LICENSE.txt
 printf 'Vaultboot version: %s\nDebian suite: trixie\nArchitecture: amd64\nSOURCE_DATE_EPOCH: %s\nBuild commit: %s\n' \
     "$version" "$SOURCE_DATE_EPOCH" "${BUILD_COMMIT:-unknown}" > /out/BUILD-INFO.txt
 dpkg-query -W live-build debootstrap xorriso >> /out/BUILD-INFO.txt
 printf 'Builder source corrections: GRUB EFI maps to grub2; Built-Using and Static-Built-Using exact sources included (build/patch-live-build.py).\n' >> /out/BUILD-INFO.txt
 cd /out
-sha256sum -- *.iso *.img.gz *.layout.json *.packages.tsv *.part-* SOURCES.txt BUILD-INFO.txt > SHA256SUMS
+sha256sum -- *.iso *.img.gz *.layout.json *.packages.tsv *.part-* SOURCES.txt BUILD-INFO.txt LICENSE.txt > SHA256SUMS
 echo 'Build complete. Boot validation is required before publishing a non-draft release.'

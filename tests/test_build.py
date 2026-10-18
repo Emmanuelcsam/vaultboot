@@ -3,6 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 import subprocess
+import hashlib
 
 spec = importlib.util.spec_from_file_location(
     "patch_live_build", Path(__file__).resolve().parents[1] / "build" / "patch-live-build.py")
@@ -88,6 +89,19 @@ class IncorporatedSourceTests(unittest.TestCase):
 
 
 class BootTimeoutTests(unittest.TestCase):
+    def test_installer_checksum_covers_complete_live_root_and_missing_source_fails(self):
+        hook = Path(__file__).resolve().parents[1] / 'config/hooks/live/0950-install-source.hook.binary'
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'live').mkdir()
+            source = root / 'live/filesystem.squashfs'
+            source.write_bytes(b'full compressed root fixture')
+            subprocess.run(['sh', str(hook)], cwd=root, check=True)
+            manifest = root / 'vaultboot-squashfs.sha256'
+            self.assertEqual(manifest.read_text(), hashlib.sha256(source.read_bytes()).hexdigest() + '  live/filesystem.squashfs\n')
+            source.unlink()
+            self.assertNotEqual(subprocess.run(['sh', str(hook)], cwd=root).returncode, 0)
+
     def test_both_firmware_menus_autoboot_after_five_seconds(self):
         hook = Path(__file__).resolve().parents[1] / 'config/hooks/live/0900-boot-timeout.hook.binary'
         with tempfile.TemporaryDirectory() as directory:
