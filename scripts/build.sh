@@ -24,7 +24,10 @@ docker build --pull -t "$image" -f "$root/build/Dockerfile" "$root/build"
 # Privilege is needed for debootstrap/chroot mounts. It grants host-device access:
 # run only trusted project code on a disposable build machine. --rm removes the
 # private work volume; scripts operate on image files and do not format host disks.
+# A bounded descriptor limit also avoids apt's expensive close-descriptor fallback
+# when live-build invokes apt after temporarily unmounting the chroot's /proc.
 docker run --rm --privileged --cpus "$cpus" --memory "$memory" --memory-swap "$memory" \
+    --ulimit nofile=65536:65536 \
     --mount "type=bind,src=$root,dst=/src,readonly" \
     --mount "type=bind,src=$output,dst=/out" \
     --mount type=volume,destination=/work \
