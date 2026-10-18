@@ -355,6 +355,9 @@ class RuntimeTests(unittest.TestCase):
         namespace = {"ob": "http://openbox.org/3.4/rc"}
         keys = {node.attrib["key"] for node in root.findall(".//ob:keybind", namespace)}
         self.assertTrue({"C-A-s", "C-A-t"}.issubset(keys))
+        app = root.find(".//ob:application[@class='md.obsidian.Obsidian']", namespace)
+        self.assertIsNotNone(app, "Match the WM_CLASS observed in the actual Obsidian 1.14.4 VM")
+        self.assertEqual(app.find("ob:maximized", namespace).text, "yes")
 
     def test_redirects_require_official_https_hosts(self):
         runtime.check_url("https://release-assets.githubusercontent.com/example?signature=abc")
