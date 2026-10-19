@@ -315,6 +315,32 @@ class RootSetupTests(unittest.TestCase):
 
 
 class OfflinePreloadTests(unittest.TestCase):
+    def test_extracted_group_writable_root_is_normalized_before_real_cache_copy(self):
+        payload = b"verified package fixture"
+        asset = {"version": "v1.14.4", "architecture": "amd64", "format": "deb",
+                 "name": "obsidian_1.14.4_amd64.deb", "size": len(payload),
+                 "url": "https://github.com/obsidianmd/obsidian-releases/releases/download/v1.14.4/obsidian_1.14.4_amd64.deb",
+                 "sha256": hashlib.sha256(payload).hexdigest()}
+        receipt = {"schema": 1, "asset": asset, "terms_accepted": True}
+        cached = SimpleNamespace(asset=asset, stream=io.BytesIO(payload), receipt=receipt)
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.dict(installer.copy_cached.__globals__, TRUSTED_UID=os.getuid()):
+            root = Path(directory) / "extracted-root"
+            root.mkdir()
+            root.chmod(0o775)  # Exact mode observed in the real extracted squashfs.
+            (root / "var").mkdir(mode=0o755)
+            (root / "var/lib").mkdir(mode=0o755)
+            destination = root / "var/lib/vaultboot/offline"
+            with self.assertRaisesRegex(installer.PreloadError, "unprotected ancestor"):
+                installer.copy_cached(cached, destination)
+            self.assertFalse((root / "var/lib/vaultboot").exists())
+            installer.configure_root(root, "1234-5678", "ABCD-1234")
+            self.assertEqual(stat.S_IMODE(root.stat().st_mode), 0o755)
+            installer.copy_cached(cached, destination)
+            self.assertEqual((destination / asset["name"]).read_bytes(), payload)
+            self.assertEqual(json.loads((destination / "ready.json").read_text()), receipt)
+            self.assertFalse((root / "home/writer").exists())
+
     def test_real_cache_corruption_is_detected_before_disks_are_offered(self):
         payload = b"pinned package test bytes"
         asset = {"version": "v1.14.4", "architecture": "amd64", "format": "deb",

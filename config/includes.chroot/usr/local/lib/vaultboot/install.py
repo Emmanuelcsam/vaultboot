@@ -458,6 +458,10 @@ def write(root, relative, text, mode=0o644):
 
 def configure_root(root, root_uuid, esp_uuid):
     """Configure only the extracted base; never read the live writer's home."""
+    # unsquashfs preserves the build directory's mode (possibly 0775). This
+    # freshly installed filesystem needs a conventional, non-writable root;
+    # keep the prepared-package validator's strict ancestor checks intact.
+    root.chmod(0o755)
     write(root, "etc/fstab", "# Vaultboot installed system\n"
           f"UUID={root_uuid} / ext4 defaults,noatime 0 1\n"
           f"UUID={esp_uuid} /boot/efi vfat umask=0077 0 2\n")
