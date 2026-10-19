@@ -35,8 +35,11 @@ done
 mksquashfs "$stage/root" "$stage/final.squashfs" \
     -noappend -no-progress -comp xz -b 1M -processors 2 -mem 1G
 mv "$stage/final.squashfs" binary/live/filesystem.squashfs
+# The installer verifies this dedicated manifest before offering any disk.
+# Refresh it before the general ISO checksums, then explicitly map both.
+(cd binary && sha256sum live/filesystem.squashfs > vaultboot-squashfs.sha256)
 lb binary_checksums --force
-checksum_maps=()
+checksum_maps=(-map /work/binary/vaultboot-squashfs.sha256 /vaultboot-squashfs.sha256)
 for checksum in binary/*sum.txt; do
     [[ -f $checksum ]] || continue
     checksum_maps+=(-map "/work/$checksum" "/${checksum##*/}")
@@ -45,6 +48,12 @@ done
 xorriso -indev "/previous/$prefix.iso" -outdev "/out/$prefix.iso" \
     -boot_image any replay -map /work/binary/live/filesystem.squashfs /live/filesystem.squashfs \
     "${checksum_maps[@]}" -commit -end
+# Verify the bytes actually embedded in the completed ISO, not only staging.
+mkdir -p "$stage/iso-check/live"
+xorriso -osirrox on -indev "/out/$prefix.iso" \
+    -extract /live/filesystem.squashfs "$stage/iso-check/live/filesystem.squashfs" \
+    -extract /vaultboot-squashfs.sha256 "$stage/iso-check/vaultboot-squashfs.sha256"
+(cd "$stage/iso-check" && sha256sum --check vaultboot-squashfs.sha256)
 python3 /src/scripts/make-usb-image.py --iso "/out/$prefix.iso" \
     --output "/out/$prefix.img" --persistence-mib 4096
 gzip -n -1 "/out/$prefix.img"
